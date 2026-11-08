@@ -1,0 +1,72 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+# one build at a time, so two builds never fight over the "latest" release
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # If a file named project.zip was uploaded, unpack it into the repo (then delete the zip).
+      # This is how the whole project, or later only the changed files, get in without uploading folder by folder.
+      - name: Unpack project.zip
+        run: |
+          if [ -f project.zip ]; then
+            unzip -q -o project.zip
+            rm project.zip
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Unpack project.zip" || true
+            git push || true
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          accept-android-sdk-licenses: true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Smart-Reader-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Publish APK as the "latest" release (fixed download link)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/*.apk Smart-Reader.apk
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest Smart-Reader.apk \
+            --title "Smart Reader - latest build" \
+            --notes "Built automatically from the latest upload" \
+            --target "$(git rev-parse HEAD)"
