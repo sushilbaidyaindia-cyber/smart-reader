@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.sushilbaidyaindia.smartreader'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.sushilbaidyaindia.smartreader"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    // fixed signing key (stored as text in debug-keystore.txt) so every GitHub build is signed the same
+    // and a new APK installs over the old one.
+    def ksFile = new File(buildDir, 'fixed-debug.keystore')
+    if (!ksFile.exists()) {
+        ksFile.parentFile.mkdirs()
+        ksFile.bytes = file('debug-keystore.txt').text.replaceAll('\\s', '').decodeBase64()
+    }
+    signingConfigs {
+        debug {
+            storeFile ksFile
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE', 'META-INF/NOTICE.txt']
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    // reads the text of PDFs that have real text in them (works offline)
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+}

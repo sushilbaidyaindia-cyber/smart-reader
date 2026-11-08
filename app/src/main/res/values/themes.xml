@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#0F5C5C</item>
+        <item name="colorPrimaryDark">#0B4444</item>
+        <item name="colorAccent">#0F5C5C</item>
+    </style>
+</resources>
