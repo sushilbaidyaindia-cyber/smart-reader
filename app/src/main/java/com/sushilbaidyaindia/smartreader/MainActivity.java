@@ -87,7 +87,7 @@ public class MainActivity extends AppCompatActivity {
 
     // library and settings
     private LinearLayout libList;
-    private TextView tvKey, tvVoice;
+    private TextView tvKey, tvVoice, tvEngine, tvGv;
 
     private final Player.Listener listener = this::refreshReader;
 
@@ -119,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
         fontSp = prefs.getInt("font_sp", 20);
         Player.I.init(this);
         if (b != null) tab = b.getInt("tab", 0);
-        else tab = Player.I.doc != null ? 0 : 1;
+        else tab = Player.I.doc != null && Player.I.playing ? 0 : 1;
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -184,6 +184,38 @@ public class MainActivity extends AppCompatActivity {
     protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
         out.putInt("tab", tab);
+    }
+
+    // ------------------------------------------------------------------ back button
+    @Override
+    public void onBackPressed() {
+        if (Importer.running) {
+            new AlertDialog.Builder(this)
+                    .setTitle("PDF পড়া চলছে")
+                    .setMessage(Importer.status + "\n\nবের হয়ে গেলে কী করবেন?")
+                    .setPositiveButton("এ পর্যন্ত যা হয়েছে সংরক্ষণ করে বন্ধ করুন", (d, w) -> {
+                        Importer.cancel = true;
+                        finish();
+                    })
+                    .setNeutralButton("পিছনে চলতে থাকুক", (d, w) -> finish())
+                    .setNegativeButton("বাতিল", null)
+                    .show();
+            return;
+        }
+        if (Player.I.doc != null && Player.I.playing) {
+            new AlertDialog.Builder(this)
+                    .setTitle("পড়া চলছে")
+                    .setMessage("বের হয়ে গেলে কী করবেন?")
+                    .setPositiveButton("সংরক্ষণ করে বের হন", (d, w) -> {
+                        Player.I.pause();          // saves the place
+                        finish();
+                    })
+                    .setNeutralButton("পিছনে পড়া চলতে থাকুক", (d, w) -> finish())
+                    .setNegativeButton("বাতিল", null)
+                    .show();
+            return;
+        }
+        super.onBackPressed();
     }
 
     // ------------------------------------------------------------------ tabs
@@ -265,6 +297,17 @@ public class MainActivity extends AppCompatActivity {
         addWeighted(r1, bPP, bPS, bNS, bNP);
         readerBody.addView(r1);
 
+        LinearLayout r1b = new LinearLayout(this);
+        r1b.setOrientation(LinearLayout.HORIZONTAL);
+        Button bRew = small("⏪ ১০", "রিওয়াইন্ড: ১০ বাক্য পিছনে");
+        bRew.setOnClickListener(v -> Player.I.skipSentences(-10));
+        Button bFwd = small("১০ ⏩", "ফাস্ট ফরওয়ার্ড: ১০ বাক্য সামনে");
+        bFwd.setOnClickListener(v -> Player.I.skipSentences(10));
+        Button jump = small("পেজে যান", "নির্দিষ্ট পেজ নম্বরে যান");
+        jump.setOnClickListener(v -> jumpDialog());
+        addWeighted(r1b, bRew, jump, bFwd);
+        readerBody.addView(r1b);
+
         btnPlay = primary("▶  প্লে");
         btnPlay.setTextSize(20);
         btnPlay.setMinHeight(dp(64));
@@ -295,15 +338,13 @@ public class MainActivity extends AppCompatActivity {
         moreRow = new LinearLayout(this);
         moreRow.setOrientation(LinearLayout.HORIZONTAL);
         moreRow.setVisibility(View.GONE);
-        Button jump = small("পেজে যান", "নির্দিষ্ট পেজে যান");
-        jump.setOnClickListener(v -> jumpDialog());
         Button timer = small("টাইমার", "ঘুমের টাইমার");
         timer.setOnClickListener(v -> timerDialog());
         Button fs = small("A−", "অক্ষর ছোট করুন");
         fs.setOnClickListener(v -> changeFont(-2));
         Button fb = small("A+", "অক্ষর বড় করুন");
         fb.setOnClickListener(v -> changeFont(2));
-        addWeighted(moreRow, jump, timer, fs, fb);
+        addWeighted(moreRow, timer, fs, fb);
         readerBody.addView(moreRow);
         tvTimer = text("", 14, false, MUTED);
         readerBody.addView(tvTimer);
@@ -353,8 +394,9 @@ public class MainActivity extends AppCompatActivity {
         hlSpan = null;
         if (!p.text.isEmpty() && p.idx >= 0 && p.idx < p.sents.size()) {
             int[] s = p.sents.get(p.idx);
+            int endSent = p.playing ? Math.min(Math.max(p.idxEnd, p.idx), p.sents.size() - 1) : p.idx;
             hlSpan = new BackgroundColorSpan(HL);
-            sp.setSpan(hlSpan, s[0], s[1], Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            sp.setSpan(hlSpan, s[0], p.sents.get(endSent)[1], Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             final int start = s[0];
             tvText.post(() -> scrollTo(start));
         }
@@ -430,8 +472,15 @@ public class MainActivity extends AppCompatActivity {
         ViewCompat.setAccessibilityHeading(head, true);
         box.addView(head);
 
+        // file
+        box.addView(heading("ফাইল বাছুন"));
+        box.addView(text("PDF, টেক্সট (.txt) বা অন্য লেখার ফাইল বাছতে পারবেন। PDF-এর পেজগুলো Gemini AI দিয়ে পড়া হয় (ইন্টারনেট ও সেটিংসে API কী লাগে)। পড়া হয়ে গেলে লেখা ফোনে থেকে যায়, তখন ইন্টারনেট লাগে না।", 16, false, MUTED));
+        Button pick = primary("ফাইল বাছুন");
+        pick.setOnClickListener(v -> pickFile());
+        box.addView(pick, fullWidth(8));
+
         // paste
-        box.addView(heading("লেখা পেস্ট করুন"));
+        box.addView(heading("অথবা লেখা পেস্ট করুন"));
         pasteTitle = new EditText(this);
         pasteTitle.setHint("নাম (না দিলে লেখার শুরু থেকে নাম হবে)");
         pasteTitle.setTextSize(18);
@@ -467,13 +516,6 @@ public class MainActivity extends AppCompatActivity {
         Button save = primary("লাইব্রেরিতে রেখে খুলুন");
         save.setOnClickListener(v -> savePasted());
         box.addView(save, fullWidth(8));
-
-        // file
-        box.addView(heading("PDF বা টেক্সট ফাইল"));
-        box.addView(text("PDF-এর পেজগুলো ছবি হিসেবে Gemini দিয়ে পড়া যায় (ইন্টারনেট ও API কী লাগে), অথবা PDF-এর ভেতরের লেখা সরাসরি নেওয়া যায় (ইন্টারনেট ছাড়া, তবে বাংলায় বর্ণের ক্রম ভুল আসতে পারে)। পড়া হয়ে গেলে লেখা ফোনে থেকে যায়, তখন ইন্টারনেট লাগে না।", 16, false, MUTED));
-        Button pick = primary("ফাইল বাছুন");
-        pick.setOnClickListener(v -> pickFile());
-        box.addView(pick, fullWidth(8));
 
         // progress
         importCard = new LinearLayout(this);
@@ -543,7 +585,6 @@ public class MainActivity extends AppCompatActivity {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
-        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/pdf", "text/plain"});
         try {
             startActivityForResult(i, REQ_PICK);
         } catch (Exception e) {
@@ -580,6 +621,16 @@ public class MainActivity extends AppCompatActivity {
             new Thread(() -> {
                 try {
                     String body = readText(uri);
+                    String head = body.substring(0, Math.min(body.length(), 4000));
+                    int bad = 0;
+                    for (int q = 0; q < head.length(); q++) {
+                        char ch = head.charAt(q);
+                        if (ch == 0 || ch == 0xFFFD) bad++;
+                    }
+                    if (bad > head.length() / 20) {
+                        throw new Exception("এটা লেখার ফাইল নয় (শুধু PDF আর টেক্সট ফাইল পড়া যায়)");
+                    }
+                    if (body.trim().isEmpty()) throw new Exception("ফাইলে কোনো লেখা নেই");
                     final long id = saveText(title, "txt", body);
                     runOnUiThread(() -> {
                         Player.I.open(id, 1, 0);
@@ -655,21 +706,10 @@ public class MainActivity extends AppCompatActivity {
         box.addView(labeled("কোন পেজ পর্যন্ত:", to));
 
         boolean hasKey = !prefs.getString("gemini_key", "").trim().isEmpty();
-        RadioGroup rg = new RadioGroup(this);
-        final RadioButton ocr = new RadioButton(this);
-        ocr.setId(View.generateViewId());
-        ocr.setText("Gemini দিয়ে পেজের ছবি পড়া (বাংলা ও স্ক্যান করা PDF-এর জন্য ভালো, ইন্টারনেট লাগে)");
-        ocr.setTextSize(16);
-        final RadioButton direct = new RadioButton(this);
-        direct.setId(View.generateViewId());
-        direct.setText("PDF-এর ভেতরের লেখা সরাসরি নেওয়া (ইন্টারনেট ছাড়া, ইংরেজি বা সাধারণ লেখার জন্য)");
-        direct.setTextSize(16);
-        rg.addView(ocr);
-        rg.addView(direct);
-        if (hasKey) ocr.setChecked(true);
-        else direct.setChecked(true);
-        box.addView(rg);
-        if (!hasKey) box.addView(text("Gemini দিয়ে পড়তে সেটিংস ট্যাবে API কী দিতে হবে।", 15, false, MUTED));
+        TextView how = text("এই PDF-এর পেজগুলো Gemini AI দিয়ে পড়া হবে (ইন্টারনেট লাগবে)।", 16, false, INK);
+        how.setPadding(0, dp(10), 0, 0);
+        box.addView(how);
+        if (!hasKey) box.addView(text("আগে সেটিংস ট্যাবে Gemini API কী দিতে হবে।", 15, true, MUTED));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -689,9 +729,11 @@ public class MainActivity extends AppCompatActivity {
                         Toast.makeText(this, "পেজ ১ থেকে " + BanglaText.digits(info.pages) + "-এর মধ্যে, আর শুরু শেষের আগে হতে হবে", Toast.LENGTH_LONG).show();
                         return;
                     }
-                    boolean useOcr = ocr.isChecked();
-                    if (useOcr && prefs.getString("gemini_key", "").trim().isEmpty()) {
-                        Toast.makeText(this, "আগে সেটিংস ট্যাবে Gemini API কী দিন, অথবা সরাসরি লেখা নেওয়া বাছুন", Toast.LENGTH_LONG).show();
+                    boolean useOcr = true;
+                    if (prefs.getString("gemini_key", "").trim().isEmpty()) {
+                        Toast.makeText(this, "আগে সেটিংস ট্যাবে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+                        info.file.delete();
+                        select(3);
                         return;
                     }
                     String t = title.getText().toString().trim();
@@ -861,7 +903,47 @@ public class MainActivity extends AppCompatActivity {
         model.setOnClickListener(v -> modelDialog());
         box.addView(model, fullWidth(8));
 
-        box.addView(heading("পড়ার ভয়েস"));
+        box.addView(heading("কোন ভয়েসে পড়া হবে"));
+        tvEngine = text("", 16, true, INK);
+        box.addView(tvEngine);
+        Button eng = secondary("ইঞ্জিন বাছুন: ফোনের ভয়েস / AI Studio");
+        eng.setOnClickListener(v -> engineDialog());
+        box.addView(eng, fullWidth(8));
+
+        box.addView(heading("AI Studio ভয়েস"));
+        box.addView(text("Google AI Studio-র Gemini ভয়েস। ইন্টারনেট আর উপরের API কী লাগে। ফ্রি কোটা শেষ হলে পড়া মাঝপথে থামতে পারে (কোড ৪২৯)।", 15, false, MUTED));
+        tvGv = text("", 16, true, INK);
+        tvGv.setPadding(0, dp(8), 0, 0);
+        box.addView(tvGv);
+        Button gm = secondary("TTS মডেল বাছুন");
+        gm.setOnClickListener(v -> ttsModelDialog());
+        box.addView(gm, fullWidth(8));
+        Button gv = secondary("ভয়েস বাছুন (৩০টি + আপনার বানানো)");
+        gv.setOnClickListener(v -> gVoiceDialog());
+        box.addView(gv, fullWidth(8));
+        Button gs = secondary("পড়ার ধরন / আবেগ (স্টাইল)");
+        gs.setOnClickListener(v -> gStyleDialog());
+        box.addView(gs, fullWidth(8));
+        final CheckBox auto = new CheckBox(this);
+        auto.setText("অটো ইমোশন: লেখা বুঝে প্রতি অংশের আবেগ নিজে ঠিক হবে");
+        auto.setTextSize(17);
+        auto.setTextColor(INK);
+        auto.setMinHeight(dp(56));
+        auto.setChecked(prefs.getBoolean("g_auto", false));
+        auto.setOnCheckedChangeListener((v, on) -> {
+            prefs.edit().putBoolean("g_auto", on).apply();
+            Player.I.settingsChanged();
+        });
+        box.addView(auto);
+        box.addView(text("অটো ইমোশনে প্রতি অংশের জন্য একটি বাড়তি Gemini অনুরোধ যায়, তাই কোটা বেশি খরচ হয়।", 14, false, MUTED));
+        Button nv = secondary("বর্ণনা দিয়ে নতুন ভয়েস বানান");
+        nv.setOnClickListener(v -> designDialog());
+        box.addView(nv, fullWidth(8));
+        Button gsmp = secondary("AI Studio ভয়েসের নমুনা শুনুন");
+        gsmp.setOnClickListener(v -> Player.I.sampleGemini("আমার সোনার বাংলা, আমি তোমায় ভালোবাসি। চিরদিন তোমার আকাশ, তোমার বাতাস, আমার প্রাণে বাজায় বাঁশি।", m -> Toast.makeText(this, m, Toast.LENGTH_SHORT).show()));
+        box.addView(gsmp, fullWidth(8));
+
+        box.addView(heading("ফোনের ভয়েস"));
         tvVoice = text("", 16, true, INK);
         box.addView(tvVoice);
         Button voice = secondary("ভয়েস বাছুন");
@@ -899,6 +981,13 @@ public class MainActivity extends AppCompatActivity {
         String k = prefs.getString("gemini_key", "").trim();
         tvKey.setText(k.isEmpty() ? "API কী এখনও দেওয়া হয়নি" : "API কী সংরক্ষিত আছে (শেষে ..." + k.substring(Math.max(0, k.length() - 4)) + ")");
         String v = prefs.getString("voice", "");
+        boolean g = "gemini".equals(prefs.getString("engine", "system"));
+        tvEngine.setText(g ? "এখন পড়া হচ্ছে: AI Studio ভয়েসে" : "এখন পড়া হচ্ছে: ফোনের ভয়েসে (ডিফল্ট)");
+        String gvn = prefs.getString("g_voice", GeminiTts.DEFAULT_VOICE);
+        tvGv.setText("মডেল: " + prefs.getString("tts_model", GeminiTts.DEFAULT_MODEL)
+                + "\nভয়েস: " + designedName(gvn)
+                + "\nস্টাইল: " + (prefs.getString("g_style", "").isEmpty() ? "নেই" : prefs.getString("g_style", ""))
+                + "\nঅটো ইমোশন: " + (prefs.getBoolean("g_auto", false) ? "চালু" : "বন্ধ"));
         tvVoice.setText(v.isEmpty() ? "ভয়েস: ফোনের ডিফল্ট বাংলা ভয়েস" : "ভয়েস: " + v);
     }
 
@@ -932,6 +1021,10 @@ public class MainActivity extends AppCompatActivity {
         m2.setText(prefs.getString("ocr_model2", "gemini-2.5-flash"));
         m2.setTextSize(16);
         box.addView(labeled("না হলে এই মডেলে:", m2));
+        Button pick = secondary("তালিকা থেকে প্রথম মডেল বাছুন");
+        final String[] known = {"gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"};
+        pick.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("মডেল").setItems(known, (d, w) -> m1.setText(known[w])).show());
+        box.addView(pick, fullWidth(4));
         box.addView(text("Google মডেলের নাম বদলালে বা বন্ধ করলে এখানে নতুন নাম দিলেই চলবে।", 14, false, MUTED));
         new AlertDialog.Builder(this)
                 .setTitle("ছবি পড়ার মডেল")
@@ -979,6 +1072,198 @@ public class MainActivity extends AppCompatActivity {
                     })
                     .show();
         });
+    }
+
+    // ------------------------------------------------------------------ AI Studio voice dialogs
+    private void engineDialog() {
+        final String[] names = {"ফোনের ভয়েস (ডিফল্ট, অফলাইনেও চলে)", "AI Studio ভয়েস (ইন্টারনেট ও API কী লাগে)"};
+        int cur = "gemini".equals(prefs.getString("engine", "system")) ? 1 : 0;
+        new AlertDialog.Builder(this)
+                .setTitle("কোন ভয়েসে পড়া হবে")
+                .setSingleChoiceItems(names, cur, (d, w) -> {
+                    prefs.edit().putString("engine", w == 1 ? "gemini" : "system").apply();
+                    Player.I.settingsChanged();
+                    refreshSettings();
+                    d.dismiss();
+                    if (w == 1 && prefs.getString("gemini_key", "").trim().isEmpty()) {
+                        Toast.makeText(this, "AI Studio-র জন্য আগে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    private void ttsModelDialog() {
+        final String[] names = new String[GeminiTts.MODELS.length + 1];
+        System.arraycopy(GeminiTts.MODELS, 0, names, 0, GeminiTts.MODELS.length);
+        names[names.length - 1] = "অন্য নাম নিজে লিখব…";
+        new AlertDialog.Builder(this)
+                .setTitle("TTS মডেল")
+                .setItems(names, (d, w) -> {
+                    if (w < GeminiTts.MODELS.length) {
+                        prefs.edit().putString("tts_model", GeminiTts.MODELS[w]).apply();
+                        Player.I.settingsChanged();
+                        refreshSettings();
+                    } else {
+                        final EditText in = new EditText(this);
+                        in.setText(prefs.getString("tts_model", GeminiTts.DEFAULT_MODEL));
+                        new AlertDialog.Builder(this)
+                                .setTitle("মডেলের নাম")
+                                .setView(pad(in))
+                                .setPositiveButton("সংরক্ষণ", (d2, w2) -> {
+                                    String m = in.getText().toString().trim();
+                                    if (!m.isEmpty()) prefs.edit().putString("tts_model", m).apply();
+                                    Player.I.settingsChanged();
+                                    refreshSettings();
+                                })
+                                .setNegativeButton("বাতিল", null)
+                                .show();
+                    }
+                })
+                .show();
+    }
+
+    /** voices made from a description: [{id,name}] */
+    private org.json.JSONArray designedList() {
+        try {
+            return new org.json.JSONArray(prefs.getString("g_designed", "[]"));
+        } catch (Exception e) {
+            return new org.json.JSONArray();
+        }
+    }
+
+    private String designedName(String id) {
+        org.json.JSONArray a = designedList();
+        for (int i = 0; i < a.length(); i++) {
+            org.json.JSONObject o = a.optJSONObject(i);
+            if (o != null && id.equals(o.optString("id"))) return o.optString("name") + " (আপনার বানানো)";
+        }
+        for (String[] v : GeminiTts.VOICES) if (v[0].equals(id)) return v[0] + " — " + v[1];
+        return id;
+    }
+
+    private void gVoiceDialog() {
+        final org.json.JSONArray des = designedList();
+        final int n = des.length();
+        final String[] names = new String[n + GeminiTts.VOICES.length];
+        final String[] ids = new String[names.length];
+        for (int i = 0; i < n; i++) {
+            org.json.JSONObject o = des.optJSONObject(i);
+            ids[i] = o.optString("id");
+            names[i] = o.optString("name") + " (আপনার বানানো)";
+        }
+        for (int i = 0; i < GeminiTts.VOICES.length; i++) {
+            ids[n + i] = GeminiTts.VOICES[i][0];
+            names[n + i] = GeminiTts.VOICES[i][0] + " — " + GeminiTts.VOICES[i][1];
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("AI Studio ভয়েস")
+                .setItems(names, (d, w) -> {
+                    prefs.edit().putString("g_voice", ids[w]).apply();
+                    Player.I.settingsChanged();
+                    refreshSettings();
+                    Player.I.sampleGemini("এই ভয়েসে পড়া হবে। আমার সোনার বাংলা।", m -> Toast.makeText(this, m, Toast.LENGTH_SHORT).show());
+                })
+                .show();
+    }
+
+    private void gStyleDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        final EditText in = new EditText(this);
+        in.setText(prefs.getString("g_style", ""));
+        in.setHint("যেমন: warm storyteller, slow pace");
+        in.setTextSize(16);
+        box.addView(labeled("পড়ার ধরন (ইংরেজিতে লিখলে ভালো কাজ করে):", in));
+        final String[] labels = new String[GeminiTts.STYLES.length];
+        for (int i = 0; i < labels.length; i++) labels[i] = GeminiTts.STYLES[i][0];
+        Button presets = secondary("তৈরি ধরন থেকে বাছুন");
+        presets.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("ধরন")
+                .setItems(labels, (d, w) -> in.setText(GeminiTts.STYLES[w][1]))
+                .show());
+        box.addView(presets, fullWidth(8));
+        new AlertDialog.Builder(this)
+                .setTitle("পড়ার ধরন / আবেগ")
+                .setView(box)
+                .setPositiveButton("সংরক্ষণ", (d, w) -> {
+                    prefs.edit().putString("g_style", in.getText().toString().trim()).apply();
+                    Player.I.settingsChanged();
+                    refreshSettings();
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    private void designDialog() {
+        if (prefs.getString("gemini_key", "").trim().isEmpty()) {
+            Toast.makeText(this, "আগে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        final EditText nm = new EditText(this);
+        nm.setHint("ভয়েসের নাম");
+        box.addView(labeled("নাম:", nm));
+        final EditText gd = new EditText(this);
+        gd.setHint("female / male");
+        gd.setText("female");
+        box.addView(labeled("লিঙ্গ (female বা male):", gd));
+        final EditText ds = new EditText(this);
+        ds.setHint("যেমন: a warm, middle-aged Bengali woman, calm like a grandmother telling a story");
+        ds.setMinLines(3);
+        box.addView(labeled("কেমন ভয়েস চান (বর্ণনা, ইংরেজিতে ভালো):", ds));
+        new AlertDialog.Builder(this)
+                .setTitle("নতুন ভয়েস বানান")
+                .setView(box)
+                .setPositiveButton("বানান", (d, w) -> {
+                    final String name = nm.getText().toString().trim();
+                    final String gender = gd.getText().toString().trim();
+                    final String desc = ds.getText().toString().trim();
+                    if (name.isEmpty() || desc.isEmpty()) {
+                        Toast.makeText(this, "নাম আর বর্ণনা দুটোই লাগবে", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    Toast.makeText(this, "ভয়েস বানানো হচ্ছে, একটু অপেক্ষা করুন…", Toast.LENGTH_LONG).show();
+                    final String key = prefs.getString("gemini_key", "").trim();
+                    String cm = prefs.getString("tts_model", GeminiTts.DEFAULT_MODEL);
+                    final String model = cm.startsWith("gemini-3.8") ? cm : GeminiTts.DEFAULT_MODEL;
+                    new Thread(() -> {
+                        GeminiTts.Designed out = null;
+                        String err = null;
+                        try {
+                            out = GeminiTts.design(key, model, name, gender.isEmpty() ? "female" : gender, "bn-IN", desc);
+                        } catch (Gemini.Failure f) {
+                            err = f.getMessage();
+                        } catch (Throwable t) {
+                            err = String.valueOf(t.getMessage());
+                        }
+                        final GeminiTts.Designed fo = out;
+                        final String fe = err;
+                        runOnUiThread(() -> {
+                            if (fo == null) {
+                                new AlertDialog.Builder(this).setTitle("ভয়েস বানানো যায়নি").setMessage(fe).setPositiveButton("ঠিক আছে", null).show();
+                                return;
+                            }
+                            try {
+                                org.json.JSONArray a = designedList();
+                                org.json.JSONObject o = new org.json.JSONObject();
+                                o.put("id", fo.id);
+                                o.put("name", name);
+                                a.put(o);
+                                prefs.edit().putString("g_designed", a.toString()).putString("g_voice", fo.id).apply();
+                            } catch (Exception ignored) { }
+                            Player.I.settingsChanged();
+                            refreshSettings();
+                            Toast.makeText(this, "ভয়েস তৈরি, এখন এটাই বাছা আছে", Toast.LENGTH_LONG).show();
+                            if (fo.sample != null) Player.I.playSample(fo.sample);
+                        });
+                    }).start();
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
     }
 
     private void openTtsSettings() {

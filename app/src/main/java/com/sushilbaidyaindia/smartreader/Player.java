@@ -3,7 +3,10 @@ package com.sushilbaidyaindia.smartreader;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.media.AudioAttributes;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioTrack;
+import android.media.PlaybackParams;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -12,6 +15,12 @@ import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -47,6 +56,35 @@ final class Player {
     String message = "";
     float rate = 1.0f;
     long sleepAt = 0;
+    int idxEnd = 0;                     // with the AI Studio voice a chunk of sentences is read at once: idx..idxEnd
+
+    // ---- AI Studio voice state
+    private final ExecutorService net = Executors.newFixedThreadPool(2);
+    private AudioTrack track;
+    private long gTok = 0;
+    private String wantKey = null;
+    private int trackFrames = 0;
+    private long trackStart = 0, trackMaxMs = 0;
+    private final Set<String> inFlight = new HashSet<>();
+    private final Map<String, GeminiTts.Audio> pcmCache = new LinkedHashMap<String, GeminiTts.Audio>(8, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, GeminiTts.Audio> e) { return size() > 6; }
+    };
+    private final Runnable pollRun = new Runnable() {
+        @Override public void run() {
+            if (track == null) return;
+            boolean done = false;
+            try {
+                done = track.getPlaybackHeadPosition() >= trackFrames - 1
+                        || System.currentTimeMillis() - trackStart > trackMaxMs;
+            } catch (Throwable t) { done = true; }
+            if (done) {
+                releaseTrack();
+                main.post(Player.this::audioDone);
+            } else {
+                main.postDelayed(this, 150);
+            }
+        }
+    };
 
     private long utt = 0;
     private int errors = 0;
@@ -269,7 +307,15 @@ final class Player {
     void setRate(float r) {
         rate = Math.max(0.5f, Math.min(2.5f, Math.round(r * 10f) / 10f));
         prefs().edit().putFloat("rate", rate).apply();
-        if (ttsReady) {
+        if (gemini()) {
+            if (track != null) {
+                try {
+                    PlaybackParams pp = new PlaybackParams();
+                    pp.setSpeed(rate);
+                    track.setPlaybackParams(pp);
+                } catch (Throwable ignored) { }
+            }
+        } else if (ttsReady) {
             tts.setSpeechRate(rate);
             if (playing) speakCurrent();
         }
@@ -292,6 +338,15 @@ final class Player {
         acquireWake();
         ReaderService.start(app);
         changed();
+        if (gemini()) {
+            if (prefs().getString("gemini_key", "").trim().isEmpty()) {
+                message = "AI Studio ভয়েসের জন্য সেটিংস ট্যাবে Gemini কী দিন।";
+                pause();
+                return;
+            }
+            speakCurrent();
+            return;
+        }
         ensureTts(() -> {
             if (!playing) return;
             if (!langOk) message = "ফোনে বাংলা ভয়েস পাওয়া যায়নি। সেটিংস ট্যাব থেকে ভয়েস ঠিক করুন।";
@@ -340,6 +395,40 @@ final class Player {
         afterJump();
     }
 
+    /** rewind (negative) or fast-forward (positive) by that many sentences */
+    void skipSentences(int n) {
+        if (doc == null || n == 0) return;
+        int count = Math.abs(n);
+        for (int k = 0; k < count; k++) {
+            if (n > 0) {
+                idx++;
+                if (idx >= sents.size()) {
+                    if (page < doc.pages) {
+                        page++;
+                        loadPage(page);
+                        idx = 0;
+                    } else {
+                        idx = Math.max(0, sents.size() - 1);
+                        break;
+                    }
+                }
+            } else {
+                idx--;
+                if (idx < 0) {
+                    if (page > 1) {
+                        page--;
+                        loadPage(page);
+                        idx = Math.max(0, sents.size() - 1);
+                    } else {
+                        idx = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        afterJump();
+    }
+
     void gotoPage(int p) {
         if (doc == null) return;
         int np = Math.max(1, Math.min(p, Math.max(1, doc.pages)));
@@ -367,6 +456,10 @@ final class Player {
 
     private void stopSpeaking() {
         utt++;
+        gTok++;
+        wantKey = null;
+        main.removeCallbacks(pollRun);
+        releaseTrack();
         if (tts != null && ttsReady) {
             try { tts.stop(); } catch (Throwable ignored) { }
         }
@@ -394,7 +487,7 @@ final class Player {
     };
 
     private void speakCurrent() {
-        if (!playing || doc == null || !ttsReady) return;
+        if (!playing || doc == null || (!ttsReady && !gemini())) return;
         main.removeCallbacks(waitRun);
         while (idx >= sents.size()) {            // this page is finished, or has no text
             if (page >= doc.pages) {
@@ -414,6 +507,11 @@ final class Player {
         message = message.startsWith("পেজ ") ? "" : message;
         savePos();
         changed();
+        if (gemini()) {
+            speakGemini();
+            return;
+        }
+        idxEnd = idx;
         int[] s = sents.get(idx);
         String t = text.substring(s[0], s[1]);
         utt++;
@@ -452,6 +550,254 @@ final class Player {
         savePos();
         changed();
         ReaderService.stop();
+    }
+
+    // ------------------------------------------------------------------ AI Studio voice
+    boolean gemini() {
+        return app != null && "gemini".equals(prefs().getString("engine", "system"));
+    }
+
+    private String gModel() { return prefs().getString("tts_model", GeminiTts.DEFAULT_MODEL); }
+
+    private String gVoice() { return prefs().getString("g_voice", GeminiTts.DEFAULT_VOICE); }
+
+    private String gStyle() { return prefs().getString("g_style", ""); }
+
+    private boolean gAuto() { return prefs().getBoolean("g_auto", false); }
+
+    private String gKey() { return prefs().getString("gemini_key", "").trim(); }
+
+    /** last sentence of the chunk that starts at 'from' (about 400 letters at a time, fewer calls) */
+    private static int chunkEnd(List<int[]> ss, String txt, int from) {
+        int end = from;
+        int len = 0;
+        while (end < ss.size()) {
+            int[] s = ss.get(end);
+            len += s[1] - s[0];
+            if (len >= 400) break;
+            end++;
+        }
+        return Math.min(end, ss.size() - 1);
+    }
+
+    private String cacheKey(long docId, int pg, int from, int to, String t) {
+        return docId + ":" + pg + ":" + from + ":" + to + ":" + (gModel() + "|" + gVoice() + "|" + gStyle() + "|" + gAuto() + "|" + t.hashCode());
+    }
+
+    private void speakGemini() {
+        idxEnd = chunkEnd(sents, text, idx);
+        int[] a = sents.get(idx);
+        int[] b = sents.get(idxEnd);
+        String t = text.substring(a[0], b[1]);
+        String key = cacheKey(doc.id, page, idx, idxEnd, t);
+        wantKey = key;
+        GeminiTts.Audio hit = pcmCache.get(key);
+        if (hit != null) {
+            playAudio(hit);
+            return;
+        }
+        message = message.startsWith("AI Studio") ? message : "";
+        fetch(key, t, true);
+    }
+
+    private void fetch(final String key, final String t, final boolean wanted) {
+        if (inFlight.contains(key)) return;
+        inFlight.add(key);
+        final long tok = gTok;
+        final String k = gKey(), model = gModel(), voice = gVoice(), style = gStyle();
+        final boolean auto = gAuto();
+        final String textModel = prefs().getString("ocr_model", "gemini-3.5-flash-lite");
+        net.execute(() -> {
+            GeminiTts.Audio out = null;
+            String err = null;
+            try {
+                String st = style;
+                if (auto) {
+                    String as = GeminiTts.autoStyle(k, textModel, t, style);
+                    if (as != null && !as.isEmpty()) st = style.isEmpty() ? as : style + ", " + as;
+                }
+                for (int attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        out = GeminiTts.speak(k, model, voice, st, t);
+                        break;
+                    } catch (Gemini.Failure f) {
+                        err = f.getMessage();
+                        if (!f.retryable || attempt == 3) break;
+                        try { Thread.sleep(2500L * attempt); } catch (InterruptedException ie) { break; }
+                    }
+                }
+            } catch (Throwable e) {
+                err = String.valueOf(e.getMessage());
+            }
+            final GeminiTts.Audio fo = out;
+            final String fe = err;
+            main.post(() -> {
+                inFlight.remove(key);
+                if (fo != null) pcmCache.put(key, fo);
+                if (!wanted && fo != null) return;
+                if (tok != gTok || !playing || !key.equals(wantKey)) return;
+                if (fo == null) {
+                    message = "AI Studio ভয়েস কাজ করেনি: " + (fe == null ? "অজানা কারণ" : fe);
+                    pause();
+                } else {
+                    playAudio(fo);
+                }
+            });
+        });
+    }
+
+    private void playAudio(GeminiTts.Audio a) {
+        releaseTrack();
+        main.removeCallbacks(pollRun);
+        try {
+            int frames = a.pcm.length / 2;
+            if (frames < 10) { audioDone(); return; }
+            AudioTrack t = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(a.rate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(a.pcm.length)
+                    .build();
+            t.write(a.pcm, 0, a.pcm.length);
+            try {
+                PlaybackParams pp = new PlaybackParams();
+                pp.setSpeed(rate);
+                t.setPlaybackParams(pp);
+            } catch (Throwable ignored) { }
+            track = t;
+            trackFrames = frames;
+            trackStart = System.currentTimeMillis();
+            trackMaxMs = (long) (frames * 1000.0 / a.rate / Math.max(0.5f, rate)) + 3000;
+            t.play();
+            main.postDelayed(pollRun, 300);
+            message = message.startsWith("AI Studio") ? "" : message;
+            changed();
+            prefetch();
+        } catch (Throwable e) {
+            message = "অডিও চালানো যায়নি: " + e.getMessage();
+            pause();
+        }
+    }
+
+    private void prefetch() {
+        try {
+            if (doc == null || idxEnd + 1 > sents.size()) return;
+            if (idxEnd + 1 < sents.size()) {
+                int to = chunkEnd(sents, text, idxEnd + 1);
+                int[] a = sents.get(idxEnd + 1), b = sents.get(to);
+                String t = text.substring(a[0], b[1]);
+                String key = cacheKey(doc.id, page, idxEnd + 1, to, t);
+                if (pcmCache.get(key) == null) fetch(key, t, false);
+            } else if (page < doc.pages) {
+                String nt = Store.get(app).page(doc.id, page + 1);
+                if (nt == null || nt.isEmpty()) return;
+                List<int[]> ns = Splitter.sentences(nt);
+                if (ns.isEmpty()) return;
+                int to = chunkEnd(ns, nt, 0);
+                String t = nt.substring(ns.get(0)[0], ns.get(to)[1]);
+                String key = cacheKey(doc.id, page + 1, 0, to, t);
+                if (pcmCache.get(key) == null) fetch(key, t, false);
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    private void audioDone() {
+        if (!playing) return;
+        errors = 0;
+        idx = idxEnd + 1;
+        speakCurrent();
+    }
+
+    private void releaseTrack() {
+        AudioTrack t = track;
+        track = null;
+        if (t != null) {
+            try { t.stop(); } catch (Throwable ignored) { }
+            try { t.release(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** a setting of the AI Studio voice changed: read the current part again with the new voice */
+    void settingsChanged() {
+        pcmCache.clear();
+        if (playing && gemini()) {
+            stopSpeaking();
+            speakCurrent();
+        }
+    }
+
+    /** speak a short sample with the AI Studio voice (reading is paused meanwhile) */
+    void sampleGemini(final String sampleText, final java.util.function.Consumer<String> result) {
+        if (playing) pause();
+        final String k = gKey(), model = gModel(), voice = gVoice(), style = gStyle();
+        if (k.isEmpty()) {
+            result.accept("আগে Gemini কী দিন।");
+            return;
+        }
+        result.accept("নমুনা তৈরি হচ্ছে…");
+        net.execute(() -> {
+            GeminiTts.Audio out = null;
+            String err = null;
+            try {
+                out = GeminiTts.speak(k, model, voice, style, sampleText);
+            } catch (Gemini.Failure f) {
+                err = f.getMessage();
+            } catch (Throwable e) {
+                err = String.valueOf(e.getMessage());
+            }
+            final GeminiTts.Audio fo = out;
+            final String fe = err;
+            main.post(() -> {
+                if (fo == null) {
+                    result.accept("ব্যর্থ: " + fe);
+                } else {
+                    playSample(fo);
+                    result.accept("নমুনা চলছে");
+                }
+            });
+        });
+    }
+
+    void playSample(GeminiTts.Audio a) {
+        if (playing) pause();
+        releaseTrack();
+        main.removeCallbacks(pollRun);
+        try {
+            AudioTrack t = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(a.rate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(a.pcm.length)
+                    .build();
+            t.write(a.pcm, 0, a.pcm.length);
+            track = t;
+            trackFrames = a.pcm.length / 2;
+            trackStart = System.currentTimeMillis();
+            trackMaxMs = (long) (trackFrames * 1000.0 / a.rate) + 3000;
+            t.play();
+            main.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (track == null) return;
+                    boolean done;
+                    try {
+                        done = track.getPlaybackHeadPosition() >= trackFrames - 1
+                                || System.currentTimeMillis() - trackStart > trackMaxMs;
+                    } catch (Throwable x) { done = true; }
+                    if (done) releaseTrack();
+                    else main.postDelayed(this, 200);
+                }
+            }, 300);
+        } catch (Throwable ignored) { }
     }
 
     private void savePos() {
