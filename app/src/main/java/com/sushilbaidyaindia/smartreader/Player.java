@@ -86,6 +86,29 @@ final class Player {
         }
     };
 
+    private android.media.ToneGenerator tone;
+    private long announceUntil = 0;
+    private boolean annPending = false;
+
+    /** a short chime and the page number, so a page change can be heard */
+    private void announcePage(int pg) {
+        if (!prefs().getBoolean("page_say", true)) return;
+        try {
+            if (tone == null) tone = new android.media.ToneGenerator(AudioManager.STREAM_MUSIC, 70);
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 220);
+        } catch (Throwable ignored) { }
+        announceUntil = System.currentTimeMillis() + 2300;
+        final String say = "পৃষ্ঠা " + BanglaText.digits(pg);
+        final long u = utt;
+        ensureTts(() -> {
+            if (!ttsReady) return;
+            try {
+                tts.speak(say, TextToSpeech.QUEUE_FLUSH, null, "ann");
+                annPending = true;
+            } catch (Throwable ignored) { }
+        });
+    }
+
     private long utt = 0;
     private int errors = 0;
     private int waits = 0;
@@ -212,9 +235,11 @@ final class Player {
     private void onTtsInit(int status) {
         if (status != TextToSpeech.SUCCESS) {
             initStarted = false;
-            playing = false;
-            message = "ফোনের টেক্সট-টু-স্পিচ চালু হয়নি। ফোনের সেটিংসে টেক্সট-টু-স্পিচ ইঞ্জিন দেখুন।";
-            changed();
+            if (!gemini()) {
+                playing = false;
+                message = "ফোনের টেক্সট-টু-স্পিচ চালু হয়নি। ফোনের সেটিংসে টেক্সট-টু-স্পিচ ইঞ্জিন দেখুন।";
+                changed();
+            }
             return;
         }
         try {
@@ -429,10 +454,14 @@ final class Player {
     void gotoPage(int p) {
         if (doc == null) return;
         int np = Math.max(1, Math.min(p, Math.max(1, doc.pages)));
+        boolean changedPage = np != page;
         page = np;
         loadPage(page);
         idx = 0;
+        if (gemini()) stopSpeaking();
+        if (changedPage && playing) announcePage(np);
         afterJump();
+        if (changedPage && !playing) announcePage(np);
     }
 
     void nextPage() { gotoPage(page + 1); }
@@ -494,6 +523,7 @@ final class Player {
             page++;
             loadPage(page);
             idx = 0;
+            announcePage(page);
             if (pageMissing) {
                 message = "পেজ " + BanglaText.digits(page) + " তৈরি হচ্ছে, একটু অপেক্ষা…";
                 changed();
@@ -512,7 +542,9 @@ final class Player {
         int[] s = sents.get(idx);
         String t = text.substring(s[0], s[1]);
         utt++;
-        int r = tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, "u" + utt);
+        int mode = annPending ? TextToSpeech.QUEUE_ADD : TextToSpeech.QUEUE_FLUSH;
+        annPending = false;
+        int r = tts.speak(t, mode, null, "u" + utt);
         if (r == TextToSpeech.ERROR) {
             message = "পড়া শুরু করা যায়নি। ফোনের টেক্সট-টু-স্পিচ ইঞ্জিন দেখুন।";
             pause();
@@ -649,7 +681,14 @@ final class Player {
         });
     }
 
-    private void playAudio(GeminiTts.Audio a) {
+    private void playAudio(final GeminiTts.Audio a) {
+        long wait = announceUntil - System.currentTimeMillis();
+        if (wait > 0 && gemini()) {                   // let the page announcement finish first
+            announceUntil = 0;
+            final long tk = gTok;
+            main.postDelayed(() -> { if (tk == gTok && playing) playAudio(a); }, wait);
+            return;
+        }
         releaseTrack();
         main.removeCallbacks(pollRun);
         try {

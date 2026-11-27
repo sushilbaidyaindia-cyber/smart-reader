@@ -36,6 +36,7 @@ import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -73,7 +74,13 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout textCard;
     private EditText jumpIn;
     private Button btnPlay;
-    private TextView tvPageInd;
+    private TextView tvPageInd, tvProc;
+    private ProgressBar procBar;
+    private SeekBar seekPage;
+    private boolean seekBusy = false;
+    private Button btnShowText;
+    private boolean autoStart = false;
+    private boolean backWarned = false;
     private LinearLayout draftRow;
     private LinearLayout moreRow;
     private long shownDoc = -1;
@@ -104,10 +111,17 @@ public class MainActivity extends AppCompatActivity {
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             updateImportCard();
+            if (autoStart && Importer.activeDoc > 0 && Importer.done >= 1 && Importer.running) {
+                autoStart = false;
+                Player.I.open(Importer.activeDoc, 1, 0);
+                askNotifications();
+                Player.I.play();
+            }
             if (Importer.running) {
                 if (Player.I.doc != null && Importer.activeDoc == Player.I.doc.id) Player.I.refreshPage();
                 handler.postDelayed(this, 900);
             } else if (tab == 2) {
+                backWarned = false;
                 refreshLibrary();
             }
         }
@@ -199,6 +213,21 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------------ back button
     @Override
     public void onBackPressed() {
+        // processing not finished: one warning first
+        if (Importer.running && !backWarned && Importer.total > 0) {
+            int pct = Importer.done * 100 / Importer.total;
+            new AlertDialog.Builder(this)
+                    .setTitle("প্রসেস এখনও শেষ হয়নি")
+                    .setMessage("এখন পর্যন্ত " + BanglaText.digits(pct) + "% হয়েছে (" + BanglaText.digits(Importer.done) + "/" + BanglaText.digits(Importer.total)
+                            + " পেজ)। এখন বেরোলে বাকি পেজগুলো তৈরি নাও হতে পারে।")
+                    .setPositiveButton("তবুও বের হব", (d, w) -> {
+                        backWarned = true;
+                        onBackPressed();
+                    })
+                    .setNegativeButton("থাকুন", null)
+                    .show();
+            return;
+        }
         final Store.Doc open = Player.I.doc;
         if (open != null && Drafts.has(this, open.id)) {
             new AlertDialog.Builder(this)
@@ -294,7 +323,8 @@ public class MainActivity extends AppCompatActivity {
         readerBody.addView(tvInfo);
         tvMsg = text("", 15, true, INK);
         tvMsg.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        tvMsg.setVisibility(View.GONE);
+        tvMsg.setText(" ");
+        tvMsg.setVisibility(View.INVISIBLE);
         readerBody.addView(tvMsg);
 
         // save / discard (shown only while the text is not in the library yet)
@@ -343,7 +373,14 @@ public class MainActivity extends AppCompatActivity {
         bPS.setOnClickListener(v -> Player.I.prevSentence());
         Button bNS = small("বাক্য ▶", "পরের বাক্য");
         bNS.setOnClickListener(v -> Player.I.nextSentence());
-        addWeighted(rc, bPS, bNS);
+        btnShowText = small(prefs.getBoolean("show_text", false) ? "📖 লেখা লুকান" : "📖 লেখা দেখান", "পড়ার লেখা দেখান বা লুকান");
+        btnShowText.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("show_text", false);
+            prefs.edit().putBoolean("show_text", on).apply();
+            textCard.setVisibility(on ? View.VISIBLE : View.GONE);
+            btnShowText.setText(on ? "📖 লেখা লুকান" : "📖 লেখা দেখান");
+        });
+        addWeighted(rc, bPS, bNS, btnShowText);
         readerBody.addView(rc);
 
         boolean dark = ACCENT == 0xFF5FC7BF;
@@ -355,6 +392,31 @@ public class MainActivity extends AppCompatActivity {
         pg.setCornerRadius(dp(10));
         tvPageInd.setBackground(pg);
         readerBody.addView(tvPageInd, fullWidth(10));
+
+        seekPage = new SeekBar(this);
+        seekPage.setContentDescription("পেজ বাছুন");
+        seekPage.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            private boolean touching = false;
+            @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (fromUser && !seekBusy && !touching) Player.I.gotoPage(progress + 1);
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { touching = true; }
+            @Override public void onStopTrackingTouch(SeekBar sb) {
+                touching = false;
+                if (!seekBusy) Player.I.gotoPage(sb.getProgress() + 1);
+            }
+        });
+        readerBody.addView(seekPage, new LinearLayout.LayoutParams(-1, dp(40)));
+
+        tvProc = text("", 14, false, MUTED);
+        tvProc.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        tvProc.setVisibility(View.GONE);
+        readerBody.addView(tvProc);
+        procBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        procBar.setMax(100);
+        procBar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);   // the text above says it; the bar stays silent
+        procBar.setVisibility(View.GONE);
+        readerBody.addView(procBar, new LinearLayout.LayoutParams(-1, dp(10)));
 
         // jump to a page: a visible number box
         LinearLayout jr = new LinearLayout(this);
@@ -447,6 +509,7 @@ public class MainActivity extends AppCompatActivity {
         tvText = text("", fontSp, false, INK);
         tvText.setLineSpacing(0f, 1.4f);
         textCard.addView(tvText);
+        textCard.setVisibility(prefs.getBoolean("show_text", false) ? View.VISIBLE : View.GONE);
         readerBody.addView(textCard, fullWidth(12));
 
         return readerScroll;
@@ -469,14 +532,25 @@ public class MainActivity extends AppCompatActivity {
         draftRow.setVisibility(isDraft ? View.VISIBLE : View.GONE);
         tvPageInd.setText("বর্তমান পেজ: " + BanglaText.digits(p.page) + " / " + BanglaText.digits(p.doc.pages)
                 + " · বাকি: " + BanglaText.digits(Math.max(0, p.doc.pages - p.page)));
+        seekBusy = true;
+        seekPage.setMax(Math.max(1, p.doc.pages - 1));
+        seekPage.setProgress(Math.max(0, p.page - 1));
+        seekBusy = false;
+        if (Importer.running && Importer.activeDoc == p.doc.id && Importer.total > 0) {
+            int pct = Importer.done * 100 / Importer.total;
+            tvProc.setText("প্রসেসিং: " + BanglaText.digits(pct) + "% (" + BanglaText.digits(Importer.done) + "/" + BanglaText.digits(Importer.total) + " পেজ তৈরি)");
+            procBar.setProgress(pct);
+            tvProc.setVisibility(View.VISIBLE);
+            procBar.setVisibility(View.VISIBLE);
+        } else {
+            tvProc.setVisibility(View.GONE);
+            procBar.setVisibility(View.GONE);
+        }
         String info = "বাক্য " + BanglaText.digits(p.sents.isEmpty() ? 0 : p.idx + 1) + "/" + BanglaText.digits(p.sents.size())
                 + (isDraft ? " · এখনও সেভ হয়নি" : "");
-        if (Importer.running && Importer.activeDoc == p.doc.id) {
-            info += " · PDF পড়া চলছে " + BanglaText.digits(Importer.done) + "/" + BanglaText.digits(Importer.total);
-        }
         tvInfo.setText(info);
         if (p.message == null || p.message.isEmpty()) {
-            tvMsg.setVisibility(View.GONE);
+            tvMsg.setVisibility(View.INVISIBLE);
         } else {
             if (!p.message.contentEquals(tvMsg.getText())) tvMsg.setText(p.message);
             tvMsg.setVisibility(View.VISIBLE);
@@ -519,15 +593,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void scrollTo(int charOffset) {
-        Layout lay = tvText.getLayout();
-        if (lay == null || charOffset > tvText.length() || !Player.I.playing) return;
-        int line = lay.getLineForOffset(charOffset);
-        int y = lay.getLineTop(line) + offsetIn(tvText, readerScroll);
-        int top = readerScroll.getScrollY();
-        int bottom = top + readerScroll.getHeight();
-        if (y < top + dp(30) || y > bottom - dp(120)) {
-            readerScroll.smoothScrollTo(0, Math.max(0, y - readerScroll.getHeight() / 3));
-        }
+        // the page does not move by itself while reading: the player buttons stay where they are
     }
 
     /** distance from the top of an ancestor's content to the top of a view inside it */
@@ -561,21 +627,57 @@ public class MainActivity extends AppCompatActivity {
     private void saveDraftDialog(final Runnable after) {
         final Store.Doc d = Player.I.doc;
         if (d == null) return;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
         final EditText nm = new EditText(this);
         nm.setText(d.title);
         nm.setTextSize(18);
         nm.setSelectAllOnFocus(true);
+        box.addView(labeled("বইয়ের নাম:", nm));
+        final EditText from = new EditText(this);
+        from.setInputType(InputType.TYPE_CLASS_NUMBER);
+        from.setText("1");
+        from.setTextSize(18);
+        box.addView(labeled("কোন পেজ থেকে সেভ করবেন:", from));
+        final EditText to = new EditText(this);
+        to.setInputType(InputType.TYPE_CLASS_NUMBER);
+        to.setText(String.valueOf(d.pages));
+        to.setTextSize(18);
+        box.addView(labeled("কোন পেজ পর্যন্ত (মোট " + BanglaText.digits(d.pages) + " পেজ):", to));
+        ScrollView sv = new ScrollView(this);
+        sv.addView(box);
         new AlertDialog.Builder(this)
-                .setTitle("বইয়ের নাম দিয়ে সেভ করুন")
-                .setView(pad(nm))
+                .setTitle("লাইব্রেরিতে সেভ করুন")
+                .setView(sv)
                 .setPositiveButton("সেভ করুন", (x, w) -> {
                     String t = nm.getText().toString().trim();
                     if (t.isEmpty()) t = d.title;
-                    Store.get(this).rename(d.id, t);
-                    Drafts.remove(this, d.id);
-                    Player.I.refreshPage();
-                    refreshReader();
-                    Toast.makeText(this, "লাইব্রেরিতে সেভ হয়েছে", Toast.LENGTH_SHORT).show();
+                    int a, z;
+                    try {
+                        a = Integer.parseInt(BanglaText.asciiDigits(from.getText().toString().trim()));
+                        z = Integer.parseInt(BanglaText.asciiDigits(to.getText().toString().trim()));
+                    } catch (NumberFormatException ex) {
+                        Toast.makeText(this, "পেজ নম্বর ঠিকমতো লিখুন", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    a = Math.max(1, Math.min(a, d.pages));
+                    z = Math.max(a, Math.min(z, d.pages));
+                    if (a == 1 && z >= d.pages) {
+                        Store.get(this).rename(d.id, t);
+                        Drafts.remove(this, d.id);
+                        Player.I.refreshPage();
+                        refreshReader();
+                        Toast.makeText(this, "লাইব্রেরিতে সেভ হয়েছে", Toast.LENGTH_SHORT).show();
+                    } else {
+                        String body = ShareHelper.gather(Store.get(this), d, a, z);
+                        if (body.isEmpty()) {
+                            Toast.makeText(this, "এই পেজগুলোতে এখনও কোনো লেখা নেই", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        saveText(t, "paste", body);
+                        Toast.makeText(this, "পেজ " + BanglaText.digits(a) + " থেকে " + BanglaText.digits(z) + " লাইব্রেরিতে সেভ হয়েছে", Toast.LENGTH_LONG).show();
+                    }
                     if (after != null) after.run();
                 })
                 .setNegativeButton("বাতিল", null)
@@ -1147,6 +1249,23 @@ public class MainActivity extends AppCompatActivity {
         return s;
     }
 
+    /** a PDF starts being read by Gemini at once, from page 1; reading begins as soon as page 1 is ready */
+    private void autoPdf(Importer.Info info) {
+        if (info.pages < 1) {
+            Toast.makeText(this, "PDF-এ কোনো পেজ নেই", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (prefs.getString("gemini_key", "").trim().isEmpty()) {
+            Toast.makeText(this, "আগে সেটিংস ট্যাবে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+            info.file.delete();
+            select(3);
+            return;
+        }
+        Importer.activeDoc = 0;
+        autoStart = true;
+        startImport(info, info.name, true, 1, info.pages);
+    }
+
     private void pdfDialog(final Importer.Info info) {
         if (info.pages < 1) {
             Toast.makeText(this, "PDF-এ কোনো পেজ নেই", Toast.LENGTH_LONG).show();
@@ -1207,6 +1326,8 @@ public class MainActivity extends AppCompatActivity {
                         return;
                     }
                     String t = title.getText().toString().trim();
+                    Importer.activeDoc = 0;
+                    autoStart = true;          // reading starts by itself as soon as the first page is ready
                     startImport(info, t.isEmpty() ? info.name : t, useOcr, a, z);
                 })
                 .setNegativeButton("বাতিল", (d, w) -> info.file.delete())
@@ -1222,6 +1343,7 @@ public class MainActivity extends AppCompatActivity {
         j.ocr = ocr;
         j.from = from;
         j.to = to;
+        backWarned = false;
         Importer.job = j;
         Importer.running = true;
         Importer.done = 0;
@@ -1231,7 +1353,7 @@ public class MainActivity extends AppCompatActivity {
         ImportService.start(this);
         handler.removeCallbacks(tick);
         handler.post(tick);
-        Toast.makeText(this, "PDF পড়া শুরু হয়েছে। অ্যাপ ছেড়ে গেলেও চলবে।", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "প্রসেসিং শুরু হয়েছে। প্রথম পেজ তৈরি হলেই পড়া শুরু হবে।", Toast.LENGTH_LONG).show();
     }
 
     private void updateImportCard() {
@@ -1400,6 +1522,9 @@ public class MainActivity extends AppCompatActivity {
         TextView head = text("সেটিংস", 26, true, ACCENT);
         ViewCompat.setAccessibilityHeading(head, true);
         box.addView(head);
+        String vn = "";
+        try { vn = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Throwable ignored) { }
+        box.addView(text("অ্যাপের ভার্সন: " + vn, 15, false, MUTED));
 
         box.addView(heading("Gemini (PDF-এর ছবি পড়ার জন্য)"));
         box.addView(text("আপনার নিজের Gemini API কী এখানে একবার দিন। এটা শুধু এই ফোনে থাকে, কোথাও আপলোড হয় না। কী ছাড়াও পেস্ট করা লেখা, টেক্সট ফাইল আর সরাসরি-লেখার PDF চলে।", 16, false, MUTED));
@@ -1412,6 +1537,28 @@ public class MainActivity extends AppCompatActivity {
         Button model = secondary("মডেলের নাম");
         model.setOnClickListener(v -> modelDialog());
         box.addView(model, fullWidth(8));
+
+        box.addView(heading("প্লেয়ার"));
+        final CheckBox cbText = new CheckBox(this);
+        cbText.setText("পড়ার সময় লেখা দেখান (বন্ধ থাকলে শুধু প্লেয়ার থাকে)");
+        cbText.setTextSize(17);
+        cbText.setTextColor(INK);
+        cbText.setMinHeight(dp(56));
+        cbText.setChecked(prefs.getBoolean("show_text", false));
+        cbText.setOnCheckedChangeListener((v, on) -> {
+            prefs.edit().putBoolean("show_text", on).apply();
+            if (textCard != null) textCard.setVisibility(on ? View.VISIBLE : View.GONE);
+            if (btnShowText != null) btnShowText.setText(on ? "📖 লেখা লুকান" : "📖 লেখা দেখান");
+        });
+        box.addView(cbText);
+        final CheckBox cbPage = new CheckBox(this);
+        cbPage.setText("পেজ বদলালে শব্দ ও পেজ নম্বর বলুন");
+        cbPage.setTextSize(17);
+        cbPage.setTextColor(INK);
+        cbPage.setMinHeight(dp(56));
+        cbPage.setChecked(prefs.getBoolean("page_say", true));
+        cbPage.setOnCheckedChangeListener((v, on) -> prefs.edit().putBoolean("page_say", on).apply());
+        box.addView(cbPage);
 
         box.addView(heading("কোন ভয়েসে পড়া হবে"));
         tvEngine = text("", 16, true, INK);

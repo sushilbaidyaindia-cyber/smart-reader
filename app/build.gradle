@@ -10,8 +10,10 @@ android {
         applicationId "com.sushilbaidyaindia.smartreader"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        // every GitHub build gets the next number automatically (GITHUB_RUN_NUMBER), so versions differ build to build
+        def runNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionCode runNo
+        versionName "1.${runNo}"
     }
 
     // fixed signing key (stored as text in debug-keystore.txt) so every GitHub build is signed the same

@@ -50,7 +50,7 @@ public class ImportService extends Service {
                 .setOngoing(ongoing)
                 .setContentIntent(PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         if (ongoing) {
-            b.setProgress(Math.max(1, max), now, false);
+            // no moving progress bar: a screen reader would keep announcing it
             Intent cancel = new Intent(this, ImportService.class).setAction(A_CANCEL);
             b.addAction(android.R.drawable.ic_menu_close_clear_cancel, "বন্ধ করুন",
                     PendingIntent.getService(this, 5, cancel, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
@@ -79,8 +79,11 @@ public class ImportService extends Service {
         new Thread(() -> {
             Thread ticker = new Thread(() -> {
                 while (alive) {
-                    try { Thread.sleep(1500); } catch (InterruptedException e) { return; }
-                    if (Importer.running) nm.notify(ID, build(Importer.status, Importer.total, Importer.done, true));
+                    try { Thread.sleep(15000); } catch (InterruptedException e) { return; }
+                    if (Importer.running) {
+                        int pct = Importer.total > 0 ? Importer.done * 100 / Importer.total : 0;
+                        nm.notify(ID, build("প্রসেসিং চলছে: " + BanglaText.digits(pct) + "%", Importer.total, Importer.done, true));
+                    }
                 }
             });
             ticker.start();
