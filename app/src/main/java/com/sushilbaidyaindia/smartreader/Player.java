@@ -117,11 +117,8 @@ final class Player {
         app = c.getApplicationContext();
         audio = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
         rate = prefs().getFloat("rate", 1.0f);
-        long last = prefs().getLong("last_doc", -1);
-        if (last > 0) {
-            Store.Doc d = Store.get(app).doc(last);
-            if (d != null) open(d.id, d.lastPage, d.lastSent);
-        }
+        Drafts.purge(app);          // texts that were never saved do not survive a fresh start
+        prefs().edit().remove("last_doc").apply();     // the reader starts empty; saved books are opened from the library
     }
 
     private SharedPreferences prefs() {

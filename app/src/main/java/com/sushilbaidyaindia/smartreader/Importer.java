@@ -94,6 +94,7 @@ final class Importer {
         status = "শুরু হচ্ছে…";
         long id = st.createDoc(j.title, "pdf", total, j.from);
         activeDoc = id;
+        Drafts.add(c, id);
         running = true;
 
         PdfRenderer renderer = null;

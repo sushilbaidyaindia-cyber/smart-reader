@@ -73,6 +73,8 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout textCard;
     private EditText jumpIn;
     private Button btnPlay;
+    private TextView tvPageInd;
+    private LinearLayout draftRow;
     private LinearLayout moreRow;
     private long shownDoc = -1;
     private int shownPage = -1;
@@ -197,6 +199,23 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------------ back button
     @Override
     public void onBackPressed() {
+        final Store.Doc open = Player.I.doc;
+        if (open != null && Drafts.has(this, open.id)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("এই লেখা এখনও সেভ হয়নি")
+                    .setMessage("সেভ করলে লাইব্রেরিতে থাকবে। সেভ না করে বেরোলে এটা মুছে যাবে।")
+                    .setPositiveButton("সেভ করুন", (d, w) -> saveDraftDialog(() -> {
+                        Player.I.pause();
+                        finish();
+                    }))
+                    .setNegativeButton("সেভ না করে বের হন", (d, w) -> {
+                        dropDraft();
+                        finish();
+                    })
+                    .setNeutralButton("থাকুন", null)
+                    .show();
+            return;
+        }
         if (Importer.running) {
             new AlertDialog.Builder(this)
                     .setTitle("PDF পড়া চলছে")
@@ -278,37 +297,92 @@ public class MainActivity extends AppCompatActivity {
         tvMsg.setVisibility(View.GONE);
         readerBody.addView(tvMsg);
 
-        // page and sentence buttons
-        LinearLayout r1 = new LinearLayout(this);
-        r1.setOrientation(LinearLayout.HORIZONTAL);
-        Button bPP = small("◀ পেজ", "আগের পেজ");
-        bPP.setOnClickListener(v -> Player.I.prevPage());
-        Button bPS = small("◀ বাক্য", "আগের বাক্য");
-        bPS.setOnClickListener(v -> Player.I.prevSentence());
-        Button bNS = small("বাক্য ▶", "পরের বাক্য");
-        bNS.setOnClickListener(v -> Player.I.nextSentence());
-        Button bNP = small("পেজ ▶", "পরের পেজ");
-        bNP.setOnClickListener(v -> Player.I.nextPage());
-        addWeighted(r1, bPP, bPS, bNS, bNP);
-        readerBody.addView(r1);
+        // save / discard (shown only while the text is not in the library yet)
+        draftRow = new LinearLayout(this);
+        draftRow.setOrientation(LinearLayout.HORIZONTAL);
+        draftRow.setVisibility(View.GONE);
+        Button bSaveD = colored("💾 লাইব্রেরিতে সেভ করুন", 0xFF0F9D58, 0xFFFFFFFF, "এই লেখা বইয়ের নাম দিয়ে লাইব্রেরিতে সেভ করুন");
+        bSaveD.setOnClickListener(v -> saveDraftDialog(null));
+        Button bDrop = colored("🗑 বাদ দিন", 0xFFD93025, 0xFFFFFFFF, "এই লেখা সেভ না করে মুছে ফেলুন");
+        bDrop.setOnClickListener(v -> dropDraftDialog());
+        addWeighted(draftRow, bSaveD, bDrop);
+        readerBody.addView(draftRow);
 
-        LinearLayout r1b = new LinearLayout(this);
-        r1b.setOrientation(LinearLayout.HORIZONTAL);
-        Button bRew = small("⏪ ১০", "রিওয়াইন্ড: ১০ বাক্য পিছনে");
-        bRew.setOnClickListener(v -> Player.I.skipSentences(-10));
-        Button bFwd = small("১০ ⏩", "ফাস্ট ফরওয়ার্ড: ১০ বাক্য সামনে");
-        bFwd.setOnClickListener(v -> Player.I.skipSentences(10));
-        addWeighted(r1b, bRew, bFwd);
-        readerBody.addView(r1b);
+        // player: big coloured buttons
+        TextView pl = text("প্লেয়ার কন্ট্রোল:", 18, true, INK);
+        ViewCompat.setAccessibilityHeading(pl, true);
+        pl.setPadding(0, dp(10), 0, dp(2));
+        readerBody.addView(pl);
 
-        btnPlay = primary("▶  প্লে");
-        btnPlay.setTextSize(20);
-        btnPlay.setMinHeight(dp(64));
+        LinearLayout ra = new LinearLayout(this);
+        ra.setOrientation(LinearLayout.HORIZONTAL);
+        Button bNext = colored("নেক্সট ➡️", 0xFFD93025, 0xFFFFFFFF, "পরের পেজ");
+        bNext.setOnClickListener(v -> Player.I.nextPage());
+        Button bFast = colored("⏩ ফাস্ট", 0xFF1A73E8, 0xFFFFFFFF, "ফাস্ট ফরওয়ার্ড: দশ বাক্য সামনে");
+        bFast.setOnClickListener(v -> Player.I.skipSentences(10));
+        btnPlay = colored("▶️ প্লে", 0xFF0F9D58, 0xFFFFFFFF, "প্লে করুন");
         btnPlay.setOnClickListener(v -> {
             askNotifications();
             Player.I.toggle();
         });
-        readerBody.addView(btnPlay, fullWidth(6));
+        addWeighted(ra, bNext, bFast, btnPlay);
+        readerBody.addView(ra);
+
+        LinearLayout rb = new LinearLayout(this);
+        rb.setOrientation(LinearLayout.HORIZONTAL);
+        Button bRew = colored("⏪ রিওয়াইন্ড", 0xFF1A73E8, 0xFFFFFFFF, "রিওয়াইন্ড: দশ বাক্য পিছনে");
+        bRew.setOnClickListener(v -> Player.I.skipSentences(-10));
+        Button bPrev = colored("⬅️ প্রিভিয়াস", 0xFFD93025, 0xFFFFFFFF, "আগের পেজ");
+        bPrev.setOnClickListener(v -> Player.I.prevPage());
+        addWeighted(rb, bRew, bPrev);
+        readerBody.addView(rb);
+
+        LinearLayout rc = new LinearLayout(this);
+        rc.setOrientation(LinearLayout.HORIZONTAL);
+        Button bPS = small("◀ বাক্য", "আগের বাক্য");
+        bPS.setOnClickListener(v -> Player.I.prevSentence());
+        Button bNS = small("বাক্য ▶", "পরের বাক্য");
+        bNS.setOnClickListener(v -> Player.I.nextSentence());
+        addWeighted(rc, bPS, bNS);
+        readerBody.addView(rc);
+
+        boolean dark = ACCENT == 0xFF5FC7BF;
+        tvPageInd = text("", 18, true, dark ? 0xFFF48FB1 : 0xFFC2185B);
+        tvPageInd.setGravity(Gravity.CENTER);
+        tvPageInd.setPadding(dp(10), dp(12), dp(10), dp(12));
+        GradientDrawable pg = new GradientDrawable();
+        pg.setColor(dark ? 0xFF3B1F2B : 0xFFFCE4EC);
+        pg.setCornerRadius(dp(10));
+        tvPageInd.setBackground(pg);
+        readerBody.addView(tvPageInd, fullWidth(10));
+
+        // jump to a page: a visible number box
+        LinearLayout jr = new LinearLayout(this);
+        jr.setOrientation(LinearLayout.HORIZONTAL);
+        jr.setGravity(Gravity.CENTER_VERTICAL);
+        jumpIn = new EditText(this);
+        jumpIn.setInputType(InputType.TYPE_CLASS_NUMBER);
+        jumpIn.setHint("পেজ নম্বর লিখুন");
+        jumpIn.setContentDescription("যে পেজে যেতে চান তার নম্বর");
+        jumpIn.setTextSize(18);
+        jumpIn.setTextColor(INK);
+        jumpIn.setHintTextColor(MUTED);
+        jumpIn.setMinHeight(dp(56));
+        Button go = colored("যাও", 0xFFFBBC04, 0xFF000000, "এই পেজে যান");
+        go.setOnClickListener(v -> {
+            try {
+                Player.I.gotoPage(Integer.parseInt(BanglaText.asciiDigits(jumpIn.getText().toString().trim())));
+                jumpIn.setText("");
+            } catch (NumberFormatException ex) {
+                Toast.makeText(this, "পেজ নম্বর লিখুন", Toast.LENGTH_SHORT).show();
+            }
+        });
+        jr.addView(jumpIn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 3f));
+        LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f);
+        gl.setMargins(dp(8), 0, 0, 0);
+        jr.addView(go, gl);
+        readerBody.addView(jr, fullWidth(10));
+
 
         // speed
         LinearLayout r2 = new LinearLayout(this);
@@ -347,32 +421,7 @@ public class MainActivity extends AppCompatActivity {
         readerBody.addView(tvTimer);
 
 
-        // jump to a page: a visible number box
-        LinearLayout jr = new LinearLayout(this);
-        jr.setOrientation(LinearLayout.HORIZONTAL);
-        jr.setGravity(Gravity.CENTER_VERTICAL);
-        jumpIn = new EditText(this);
-        jumpIn.setInputType(InputType.TYPE_CLASS_NUMBER);
-        jumpIn.setHint("পেজ নম্বর লিখুন");
-        jumpIn.setContentDescription("যে পেজে যেতে চান তার নম্বর");
-        jumpIn.setTextSize(18);
-        jumpIn.setTextColor(INK);
-        jumpIn.setHintTextColor(MUTED);
-        jumpIn.setMinHeight(dp(56));
-        Button go = primary("যাও");
-        go.setOnClickListener(v -> {
-            try {
-                Player.I.gotoPage(Integer.parseInt(BanglaText.asciiDigits(jumpIn.getText().toString().trim())));
-                jumpIn.setText("");
-            } catch (NumberFormatException ex) {
-                Toast.makeText(this, "পেজ নম্বর লিখুন", Toast.LENGTH_SHORT).show();
-            }
-        });
-        jr.addView(jumpIn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 3f));
-        LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f);
-        gl.setMargins(dp(8), 0, 0, 0);
-        jr.addView(go, gl);
-        readerBody.addView(jr, fullWidth(10));
+
 
         LinearLayout r3 = new LinearLayout(this);
         r3.setOrientation(LinearLayout.HORIZONTAL);
@@ -416,8 +465,12 @@ public class MainActivity extends AppCompatActivity {
         if (!has) return;
 
         tvTitle.setText(p.doc.title);
-        String info = "পেজ " + BanglaText.digits(p.page) + "/" + BanglaText.digits(p.doc.pages)
-                + " · বাক্য " + BanglaText.digits(p.sents.isEmpty() ? 0 : p.idx + 1) + "/" + BanglaText.digits(p.sents.size());
+        boolean isDraft = Drafts.has(this, p.doc.id);
+        draftRow.setVisibility(isDraft ? View.VISIBLE : View.GONE);
+        tvPageInd.setText("বর্তমান পেজ: " + BanglaText.digits(p.page) + " / " + BanglaText.digits(p.doc.pages)
+                + " · বাকি: " + BanglaText.digits(Math.max(0, p.doc.pages - p.page)));
+        String info = "বাক্য " + BanglaText.digits(p.sents.isEmpty() ? 0 : p.idx + 1) + "/" + BanglaText.digits(p.sents.size())
+                + (isDraft ? " · এখনও সেভ হয়নি" : "");
         if (Importer.running && Importer.activeDoc == p.doc.id) {
             info += " · PDF পড়া চলছে " + BanglaText.digits(Importer.done) + "/" + BanglaText.digits(Importer.total);
         }
@@ -452,7 +505,7 @@ public class MainActivity extends AppCompatActivity {
             tvText.post(() -> scrollTo(start));
         }
 
-        btnPlay.setText(p.playing ? "⏸  পজ" : "▶  প্লে");
+        btnPlay.setText(p.playing ? "⏸ পজ" : "▶️ প্লে");
         btnPlay.setContentDescription(p.playing ? "পজ করুন" : "প্লে করুন");
         tvRate.setText("গতি " + BanglaText.digits(String.format(java.util.Locale.US, "%.1f", p.rate)) + "×");
         tvRate.setContentDescription("পড়ার গতি " + BanglaText.digits(String.format(java.util.Locale.US, "%.1f", p.rate)) + " গুণ");
@@ -493,6 +546,63 @@ public class MainActivity extends AppCompatActivity {
         fontSp = Math.max(14, Math.min(40, fontSp + delta));
         prefs.edit().putInt("font_sp", fontSp).apply();
         tvText.setTextSize(fontSp);
+    }
+
+    /** an unsaved text that is open and is not the one we are about to open is thrown away */
+    private void discardCurrentDraft(long keepId) {
+        Store.Doc cur = Player.I.doc;
+        if (cur == null || cur.id == keepId || !Drafts.has(this, cur.id)) return;
+        if (Importer.running && Importer.activeDoc == cur.id) Importer.cancel = true;
+        Player.I.closeIfOpen(cur.id);
+        Store.get(this).delete(cur.id);
+        Drafts.remove(this, cur.id);
+    }
+
+    private void saveDraftDialog(final Runnable after) {
+        final Store.Doc d = Player.I.doc;
+        if (d == null) return;
+        final EditText nm = new EditText(this);
+        nm.setText(d.title);
+        nm.setTextSize(18);
+        nm.setSelectAllOnFocus(true);
+        new AlertDialog.Builder(this)
+                .setTitle("বইয়ের নাম দিয়ে সেভ করুন")
+                .setView(pad(nm))
+                .setPositiveButton("সেভ করুন", (x, w) -> {
+                    String t = nm.getText().toString().trim();
+                    if (t.isEmpty()) t = d.title;
+                    Store.get(this).rename(d.id, t);
+                    Drafts.remove(this, d.id);
+                    Player.I.refreshPage();
+                    refreshReader();
+                    Toast.makeText(this, "লাইব্রেরিতে সেভ হয়েছে", Toast.LENGTH_SHORT).show();
+                    if (after != null) after.run();
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    private void dropDraft() {
+        Store.Doc d = Player.I.doc;
+        if (d == null) return;
+        if (Importer.running && Importer.activeDoc == d.id) Importer.cancel = true;
+        Player.I.closeIfOpen(d.id);
+        Store.get(this).delete(d.id);
+        Drafts.remove(this, d.id);
+        refreshReader();
+        refreshLibrary();
+    }
+
+    private void dropDraftDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("এই লেখা বাদ দেবেন?")
+                .setMessage("সেভ করা হয়নি, তাই বাদ দিলে এটা আর ফিরে পাবেন না।")
+                .setPositiveButton("বাদ দিন", (x, w) -> {
+                    dropDraft();
+                    Toast.makeText(this, "বাদ দেওয়া হয়েছে", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("থাক", null)
+                .show();
     }
 
     private void jumpDialog() {
@@ -896,7 +1006,7 @@ public class MainActivity extends AppCompatActivity {
         }
         String title = pasteTitle.getText().toString().trim();
         if (title.isEmpty()) title = autoTitle(body);
-        long id = saveText(title, "paste", body);
+        long id = saveDraft(title, "paste", body);
         pasteBody.setText("");
         pasteTitle.setText("");
         Player.I.open(id, 1, 0);
@@ -908,6 +1018,14 @@ public class MainActivity extends AppCompatActivity {
         String t = body.replaceAll("\\s+", " ").trim();
         if (t.length() > 40) t = t.substring(0, 40).trim() + "…";
         return t;
+    }
+
+    /** a text that stays out of the library until the person saves it */
+    private long saveDraft(String title, String source, String body) {
+        discardCurrentDraft(-1);
+        long id = saveText(title, source, body);
+        Drafts.add(this, id);
+        return id;
     }
 
     private long saveText(String title, String source, String body) {
@@ -983,7 +1101,7 @@ public class MainActivity extends AppCompatActivity {
                         throw new Exception("এটা লেখার ফাইল নয় (শুধু PDF আর টেক্সট ফাইল পড়া যায়)");
                     }
                     if (body.trim().isEmpty()) throw new Exception("ফাইলে কোনো লেখা নেই");
-                    final long id = saveText(title, "txt", body);
+                    final long id = saveDraft(title, "txt", body);
                     runOnUiThread(() -> {
                         Player.I.open(id, 1, 0);
                         select(0);
@@ -1097,6 +1215,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startImport(Importer.Info info, String title, boolean ocr, int from, int to) {
+        discardCurrentDraft(-1);
         Importer.Job j = new Importer.Job();
         j.file = info.file;
         j.title = title;
@@ -1177,7 +1296,9 @@ public class MainActivity extends AppCompatActivity {
     private void refreshLibrary() {
         if (libList == null) return;
         libList.removeAllViews();
-        List<Store.Doc> docs = Store.get(this).docs();
+        List<Store.Doc> docs = new java.util.ArrayList<>();
+        java.util.Set<Long> dr = Drafts.all(this);
+        for (Store.Doc x : Store.get(this).docs()) if (!dr.contains(x.id)) docs.add(x);
         int totalDocs = docs.size();
         String q = libSearch == null ? "" : libSearch.getText().toString().trim().toLowerCase();
         if (!q.isEmpty()) {
@@ -1214,6 +1335,7 @@ public class MainActivity extends AppCompatActivity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             Button open = small("খুলুন", d.title + " খুলুন");
             open.setOnClickListener(v -> {
+                discardCurrentDraft(d.id);
                 Player.I.open(d.id, d.lastPage, d.lastSent);
                 select(0);
             });
@@ -1806,7 +1928,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 String t = customNamed ? title : (video ? "ভিডিও: " : "ছবি: ") + title;
-                long id = saveText(t, video ? "vid" : "img", fo);
+                long id = saveDraft(t, video ? "vid" : "img", fo);
                 Player.I.open(id, 1, 0);
                 select(0);
                 Toast.makeText(this, "লাইব্রেরিতে রাখা হয়েছে", Toast.LENGTH_SHORT).show();
@@ -1916,6 +2038,24 @@ public class MainActivity extends AppCompatActivity {
         g.setCornerRadius(dp(14));
         g.setStroke(dp(2), ACCENT);
         b.setBackground(g);
+        return b;
+    }
+
+    private Button colored(String s, int bg, int fg, String description) {
+        Button b = new Button(this);
+        b.setText(s);
+        b.setTextSize(17);
+        b.setAllCaps(false);
+        b.setTextColor(fg);
+        b.setMinHeight(dp(58));
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setPadding(dp(4), 0, dp(4), 0);
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(bg);
+        g.setCornerRadius(dp(10));
+        b.setBackground(g);
+        b.setContentDescription(description);
         return b;
     }
 
