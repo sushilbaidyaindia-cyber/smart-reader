@@ -963,8 +963,8 @@ public class MainActivity extends AppCompatActivity {
         }
         translating = true;
         final String key = prefs.getString("gemini_key", "");
-        final String m1 = prefs.getString("ocr_model", "gemini-3.5-flash-lite");
-        final String m2 = prefs.getString("ocr_model2", "gemini-2.5-flash");
+        final String m1 = Gemini.cleanModel(prefs.getString("ocr_model", ""), Gemini.DEFAULT_M1);
+        final String m2 = Gemini.cleanModel(prefs.getString("ocr_model2", ""), Gemini.DEFAULT_M2);
         final Store st = Store.get(this);
         new Thread(() -> {
             StringBuilder out = new StringBuilder();
@@ -1580,18 +1580,18 @@ public class MainActivity extends AppCompatActivity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(8), dp(20), 0);
         final EditText m1 = new EditText(this);
-        m1.setText(prefs.getString("ocr_model", "gemini-3.5-flash-lite"));
+        m1.setText(Gemini.cleanModel(prefs.getString("ocr_model", ""), Gemini.DEFAULT_M1));
         m1.setTextSize(16);
         box.addView(labeled("প্রথমে এই মডেলে চেষ্টা:", m1));
         final EditText m2 = new EditText(this);
-        m2.setText(prefs.getString("ocr_model2", "gemini-2.5-flash"));
+        m2.setText(Gemini.cleanModel(prefs.getString("ocr_model2", ""), Gemini.DEFAULT_M2));
         m2.setTextSize(16);
         box.addView(labeled("না হলে এই মডেলে:", m2));
-        Button pick = secondary("তালিকা থেকে প্রথম মডেল বাছুন");
-        final String[] known = {"gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"};
+        Button pick = secondary("তালিকা থেকে বাছুন (বর্তমান মডেল)");
+        final String[] known = Gemini.CURRENT;
         pick.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("মডেল").setItems(known, (d, w) -> m1.setText(known[w])).show());
         box.addView(pick, fullWidth(4));
-        box.addView(text("Google মডেলের নাম বদলালে বা বন্ধ করলে এখানে নতুন নাম দিলেই চলবে।", 14, false, MUTED));
+        box.addView(text("কোনো মডেল বন্ধ বা ব্যর্থ হলে অ্যাপ নিজেই পরের মডেলে চেষ্টা করবে (৩.৮ ফ্ল্যাশ, ৩.৬ ফ্ল্যাশ, ৩.৫ ফ্ল্যাশ-লাইট, ৩.১ ফ্ল্যাশ-লাইট, ৪ আর্গন), আর যেটা চলে সেটা মনে রাখবে। পুরোনো ২.x মডেল নিলে নিজে বাদ পড়ে যাবে।", 14, false, MUTED));
         new AlertDialog.Builder(this)
                 .setTitle("ছবি পড়ার মডেল")
                 .setView(box)
@@ -1905,8 +1905,8 @@ public class MainActivity extends AppCompatActivity {
         };
         h.postDelayed(tick, 1000);
         final String key = prefs.getString("gemini_key", "");
-        final String m1 = prefs.getString("ocr_model", "gemini-3.5-flash-lite");
-        final String m2 = prefs.getString("ocr_model2", "gemini-2.5-flash");
+        final String m1 = Gemini.cleanModel(prefs.getString("ocr_model", ""), Gemini.DEFAULT_M1);
+        final String m2 = Gemini.cleanModel(prefs.getString("ocr_model2", ""), Gemini.DEFAULT_M2);
         new Thread(() -> {
             String out = null;
             String err = null;

@@ -603,7 +603,7 @@ final class Player {
         final long tok = gTok;
         final String k = gKey(), model = gModel(), voice = gVoice(), style = gStyle();
         final boolean auto = gAuto();
-        final String textModel = prefs().getString("ocr_model", "gemini-3.5-flash-lite");
+        final String textModel = Gemini.chain(prefs().getString("ocr_model", ""), prefs().getString("ocr_model2", ""))[0];
         net.execute(() -> {
             GeminiTts.Audio out = null;
             String err = null;
@@ -613,15 +613,21 @@ final class Player {
                     String as = GeminiTts.autoStyle(k, textModel, t, style);
                     if (as != null && !as.isEmpty()) st = style.isEmpty() ? as : style + ", " + as;
                 }
-                for (int attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        out = GeminiTts.speak(k, model, voice, st, t);
-                        break;
-                    } catch (Gemini.Failure f) {
-                        err = f.getMessage();
-                        if (!f.retryable || attempt == 3) break;
-                        try { Thread.sleep(2500L * attempt); } catch (InterruptedException ie) { break; }
+                java.util.LinkedHashSet<String> tm = new java.util.LinkedHashSet<>();
+                tm.add(model);
+                for (String x : GeminiTts.MODELS) tm.add(x);
+                for (String mdl : tm) {
+                    for (int attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            out = GeminiTts.speak(k, mdl, voice, st, t);
+                            break;
+                        } catch (Gemini.Failure f) {
+                            err = f.getMessage();
+                            if (f.modelProblem || !f.retryable || attempt == 3) break;
+                            try { Thread.sleep(2500L * attempt); } catch (InterruptedException ie) { break; }
+                        }
                     }
+                    if (out != null) break;
                 }
             } catch (Throwable e) {
                 err = String.valueOf(e.getMessage());

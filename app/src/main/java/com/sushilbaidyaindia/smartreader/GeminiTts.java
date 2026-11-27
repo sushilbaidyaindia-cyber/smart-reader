@@ -212,8 +212,11 @@ final class GeminiTts {
         if (code == 429) msg = "ব্যবহারের সীমা পেরিয়েছে (HTTP 429): " + msg;
         if (code == 400 && msg.toLowerCase().contains("api key")) msg = "API কী ঠিক নয়: " + msg;
         if (code == 403) msg = "API কী কাজ করছে না বা অনুমতি নেই: " + msg;
+        boolean mp = Gemini.isModelProblem(code, msg);
         if (code == 404) msg = "মডেল বা ঠিকানা পাওয়া যায়নি (HTTP 404): " + msg;
-        throw new Gemini.Failure(msg, retry);
+        Gemini.Failure fl = new Gemini.Failure(msg, retry);
+        fl.modelProblem = mp;
+        throw fl;
     }
 
     private static String readAll(InputStream is) throws java.io.IOException {

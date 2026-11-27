@@ -39,10 +39,46 @@ final class Gemini {
 
     static final class Failure extends Exception {
         final boolean retryable;
+        /** true when this model itself is the problem (closed, renamed, not for this key): try the next model */
+        boolean modelProblem = false;
         Failure(String m, boolean retryable) {
             super(m);
             this.retryable = retryable;
         }
+    }
+
+    // ------------------------------------------------------------------ models
+    /** the models Google lists as current (Stable) for reading pictures and documents */
+    static final String DEFAULT_M1 = "gemini-3.8-flash";
+    static final String DEFAULT_M2 = "gemini-3.5-flash-lite";
+    static final String[] CURRENT = {"gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-4-argon"};
+    static volatile String lastGood = null;
+
+    /** an old or empty saved model name becomes the default, so a closed model never blocks reading */
+    static String cleanModel(String m, String dflt) {
+        if (m == null) return dflt;
+        m = m.trim();
+        if (m.isEmpty() || m.contains("gemini-2.") || m.contains("gemini-1.") || m.contains("gemini-3-pro") || m.contains("preview")) return dflt;
+        return m;
+    }
+
+    /** the order to try: the model that worked last time, the person's two choices, then the current ones */
+    static String[] chain(String m1, String m2) {
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        String g = lastGood;
+        if (g != null) set.add(g);
+        set.add(cleanModel(m1, DEFAULT_M1));
+        set.add(cleanModel(m2, DEFAULT_M2));
+        for (String c : CURRENT) set.add(c);
+        return set.toArray(new String[0]);
+    }
+
+    static boolean isModelProblem(int code, String msg) {
+        String m = msg == null ? "" : msg.toLowerCase();
+        return code == 404
+                || m.contains("no longer available") || m.contains("is not found") || m.contains("not supported for generatecontent")
+                || m.contains("has been shut down") || m.contains("deprecated")
+                || (code == 400 && m.contains("model"));
     }
 
     /** One call to one model. Returns the page text (may be empty). */
@@ -95,8 +131,11 @@ final class Gemini {
             } catch (Exception ignored) { }
             boolean retry = code == 429 || code >= 500 || code == 408;
             if (code == 400 && msg.toLowerCase().contains("api key")) msg = "API কী ঠিক নয়: " + msg;
+            boolean mp = isModelProblem(code, msg);
             if (code == 403) msg = "API কী কাজ করছে না বা অনুমতি নেই: " + msg;
-            throw new Failure(msg, retry);
+            Failure fl = new Failure(msg, retry);
+            fl.modelProblem = mp && code != 403;
+            throw fl;
         } catch (Failure f) {
             throw f;
         } catch (java.io.IOException e) {

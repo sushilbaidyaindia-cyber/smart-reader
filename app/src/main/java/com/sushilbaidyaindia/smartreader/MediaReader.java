@@ -171,7 +171,7 @@ final class MediaReader {
 
     // ------------------------------------------------------------------ plumbing
     private static String generate(String key, String m1, String m2, JSONArray parts, int timeout) throws Gemini.Failure {
-        String[] models = m2 == null || m2.trim().isEmpty() || m2.trim().equals(m1.trim()) ? new String[]{m1} : new String[]{m1, m2};
+        String[] models = Gemini.chain(m1, m2);
         Gemini.Failure last = null;
         for (String model : models) {
             for (int attempt = 0; attempt < 3; attempt++) {
@@ -189,9 +189,10 @@ final class MediaReader {
                     }
                     String t = Splitter.tidy(Gemini.clean(sb.toString()));
                     if (t.isEmpty()) throw new Gemini.Failure("Gemini কিছু লেখেনি (ছবি বা ভিডিও ব্লক হয়ে থাকতে পারে)", false);
+                    Gemini.lastGood = model;
                     return t;
                 } catch (Gemini.Failure f) {
-                    last = f;
+                    if (!f.modelProblem || last == null) last = f;
                     if (!f.retryable) break;
                     try { Thread.sleep(3000L * (attempt + 1)); } catch (InterruptedException ie) { throw f; }
                 } catch (java.io.IOException e) {
@@ -244,7 +245,9 @@ final class MediaReader {
         if (code == 400 && msg.toLowerCase().contains("api key")) msg = "API কী ঠিক নয়: " + msg;
         if (code == 403) msg = "API কী কাজ করছে না বা অনুমতি নেই: " + msg;
         if (code == 404) msg = "মডেল বা ফাইল পাওয়া যায়নি (HTTP 404): " + msg;
-        return new Gemini.Failure(msg, retry);
+        Gemini.Failure fl = new Gemini.Failure(msg, retry);
+        fl.modelProblem = Gemini.isModelProblem(code, msg) && code != 403;
+        return fl;
     }
 
     /** Files API, resumable upload in one go */

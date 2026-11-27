@@ -84,8 +84,8 @@ final class Importer {
         Store st = Store.get(c);
         SharedPreferences sp = c.getSharedPreferences("reader", Context.MODE_PRIVATE);
         String key = sp.getString("gemini_key", "");
-        String m1 = sp.getString("ocr_model", "gemini-3.5-flash-lite");
-        String m2 = sp.getString("ocr_model2", "gemini-2.5-flash");
+        String m1 = Gemini.cleanModel(sp.getString("ocr_model", ""), Gemini.DEFAULT_M1);
+        String m2 = Gemini.cleanModel(sp.getString("ocr_model2", ""), Gemini.DEFAULT_M2);
 
         total = j.to - j.from + 1;
         done = 0;
@@ -196,18 +196,21 @@ final class Importer {
             pg.close();
         }
         Gemini.Failure last = null;
-        String[] models = m2 == null || m2.trim().isEmpty() || m2.trim().equals(m1.trim()) ? new String[]{m1} : new String[]{m1, m2};
-        for (String model : models) {
+        // callback system: if a model is closed or fails, the next one is tried; the one that works is remembered
+        for (String model : Gemini.chain(m1, m2)) {
             for (int attempt = 0; attempt < 4; attempt++) {
                 if (cancel) throw new Gemini.Failure("বন্ধ করা হয়েছে", false);
                 try {
-                    return Gemini.ocr(key, model, b64);
+                    String t = Gemini.ocr(key, model, b64);
+                    Gemini.lastGood = model;
+                    return t;
                 } catch (Gemini.Failure f) {
-                    last = f;
+                    if (!f.modelProblem || last == null) last = f;
                     if (!f.retryable) break;
                     sleep(3000L * (attempt + 1));
                 }
             }
+            if (Gemini.lastGood != null && Gemini.lastGood.equals(model)) Gemini.lastGood = null;
         }
         throw last == null ? new Gemini.Failure("OCR ব্যর্থ", true) : last;
     }
