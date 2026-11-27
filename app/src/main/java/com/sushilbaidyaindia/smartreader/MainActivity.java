@@ -52,7 +52,7 @@ import java.util.List;
 /** Smart Reader: paste text or add a PDF, keep it offline in the library, and have the phone read it aloud. */
 public class MainActivity extends AppCompatActivity {
 
-    private static final String[] TAB_NAMES = {"পড়ুন", "যোগ করুন", "লাইব্রেরি", "সেটিংস"};
+    private static final String[] TAB_NAMES = {"রিডার", "টুলস", "লাইব্রেরি", "সেটিংস"};
     private static final int REQ_PICK = 11;
     private static final int REQ_NOTIF = 77;
 
@@ -69,7 +69,9 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout readerBody;
     private LinearLayout emptyCard;
     private TextView tvTitle, tvInfo, tvMsg, tvText, tvRate, tvTimer;
-    private ScrollView textScroll;
+    private ScrollView readerScroll;
+    private LinearLayout textCard;
+    private EditText jumpIn;
     private Button btnPlay;
     private LinearLayout moreRow;
     private long shownDoc = -1;
@@ -87,7 +89,13 @@ public class MainActivity extends AppCompatActivity {
 
     // library and settings
     private LinearLayout libList;
+    private EditText libSearch;
+    private TextView tvLibCount;
     private TextView tvKey, tvVoice, tvEngine, tvGv;
+    private LinearLayout gBox, sysBox;
+    private RadioGroup engGroup;
+    private RadioButton rbSys, rbG;
+    private boolean engBusy = false;
 
     private final Player.Listener listener = this::refreshReader;
 
@@ -119,7 +127,7 @@ public class MainActivity extends AppCompatActivity {
         fontSp = prefs.getInt("font_sp", 20);
         Player.I.init(this);
         if (b != null) tab = b.getInt("tab", 0);
-        else tab = Player.I.doc != null && Player.I.playing ? 0 : 1;
+        else tab = 0;
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -128,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
         FrameLayout content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         pages[0] = buildReader();
-        pages[1] = buildAdd();
+        pages[1] = buildTools();
         pages[2] = buildLibrary();
         pages[3] = buildSettings();
         for (View p : pages) content.addView(p, new FrameLayout.LayoutParams(-1, -1));
@@ -229,6 +237,7 @@ public class MainActivity extends AppCompatActivity {
             tabs[k].setSelected(on);
             tabs[k].setContentDescription(TAB_NAMES[k] + ", ট্যাব " + BanglaText.digits(k + 1) + " এর ৪" + (on ? ", নির্বাচিত" : ""));
         }
+        if (i == 1) refreshTools();
         if (i == 2) refreshLibrary();
         if (i == 3) refreshSettings();
         updateImportCard();
@@ -236,29 +245,28 @@ public class MainActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ tab 1: reader
     private View buildReader() {
-        FrameLayout frame = new FrameLayout(this);
+        readerScroll = new ScrollView(this);
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(14), dp(12), dp(14), dp(20));
+        readerScroll.addView(page);
 
-        // when nothing is open
+        TextView hd = text("স্মার্ট রিডার", 26, true, ACCENT);
+        ViewCompat.setAccessibilityHeading(hd, true);
+        page.addView(hd);
+        page.addView(buildAddCard(), fullWidth(8));
+
         emptyCard = new LinearLayout(this);
         emptyCard.setOrientation(LinearLayout.VERTICAL);
-        emptyCard.setPadding(dp(20), dp(24), dp(20), dp(20));
-        TextView h = text("স্মার্ট রিডার", 28, true, ACCENT);
-        ViewCompat.setAccessibilityHeading(h, true);
-        emptyCard.addView(h);
-        TextView e = text("এখনও কিছু খোলা নেই। লেখা পেস্ট করতে বা PDF দিতে 'যোগ করুন' ট্যাবে যান। আগে সংরক্ষিত কিছু পড়তে 'লাইব্রেরি' ট্যাবে যান।", 18, false, INK);
-        e.setPadding(0, dp(12), 0, dp(16));
+        TextView e = text("এখনও কিছু খোলা নেই। ওপরে ফাইল বাছুন বা লেখা পেস্ট করুন। আগে সংরক্ষিত কিছু পড়তে 'লাইব্রেরি' ট্যাবে যান।", 17, false, INK);
+        e.setPadding(0, dp(16), 0, dp(8));
         emptyCard.addView(e);
-        Button toAdd = primary("যোগ করুন");
-        toAdd.setOnClickListener(v -> select(1));
-        emptyCard.addView(toAdd, fullWidth(0));
-        Button toLib = secondary("লাইব্রেরি খুলুন");
-        toLib.setOnClickListener(v -> select(2));
-        emptyCard.addView(toLib, fullWidth(8));
-        frame.addView(emptyCard, new FrameLayout.LayoutParams(-1, -1));
+        page.addView(emptyCard);
 
         readerBody = new LinearLayout(this);
         readerBody.setOrientation(LinearLayout.VERTICAL);
-        readerBody.setPadding(dp(14), dp(12), dp(14), dp(8));
+        readerBody.setPadding(0, dp(12), 0, 0);
+        page.addView(readerBody, new LinearLayout.LayoutParams(-1, -2));
 
         tvTitle = text("", 22, true, ACCENT);
         ViewCompat.setAccessibilityHeading(tvTitle, true);
@@ -269,19 +277,6 @@ public class MainActivity extends AppCompatActivity {
         tvMsg.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         tvMsg.setVisibility(View.GONE);
         readerBody.addView(tvMsg);
-
-        textScroll = new ScrollView(this);
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(14), dp(12), dp(14), dp(12));
-        box.setBackground(card());
-        tvText = text("", fontSp, false, INK);
-        tvText.setLineSpacing(0f, 1.4f);
-        box.addView(tvText);
-        textScroll.addView(box);
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        sp.setMargins(0, dp(8), 0, dp(8));
-        readerBody.addView(textScroll, sp);
 
         // page and sentence buttons
         LinearLayout r1 = new LinearLayout(this);
@@ -303,9 +298,7 @@ public class MainActivity extends AppCompatActivity {
         bRew.setOnClickListener(v -> Player.I.skipSentences(-10));
         Button bFwd = small("১০ ⏩", "ফাস্ট ফরওয়ার্ড: ১০ বাক্য সামনে");
         bFwd.setOnClickListener(v -> Player.I.skipSentences(10));
-        Button jump = small("পেজে যান", "নির্দিষ্ট পেজ নম্বরে যান");
-        jump.setOnClickListener(v -> jumpDialog());
-        addWeighted(r1b, bRew, jump, bFwd);
+        addWeighted(r1b, bRew, bFwd);
         readerBody.addView(r1b);
 
         btnPlay = primary("▶  প্লে");
@@ -344,17 +337,75 @@ public class MainActivity extends AppCompatActivity {
         fs.setOnClickListener(v -> changeFont(-2));
         Button fb = small("A+", "অক্ষর বড় করুন");
         fb.setOnClickListener(v -> changeFont(2));
-        addWeighted(moreRow, timer, fs, fb);
+        Button shareBtn = small("শেয়ার", "এই লেখা শেয়ার করুন");
+        shareBtn.setOnClickListener(v -> {
+            if (Player.I.doc != null) shareDialog(Player.I.doc, Player.I.page);
+        });
+        addWeighted(moreRow, timer, shareBtn, fs, fb);
         readerBody.addView(moreRow);
         tvTimer = text("", 14, false, MUTED);
         readerBody.addView(tvTimer);
 
-        frame.addView(readerBody, new FrameLayout.LayoutParams(-1, -1));
-        return frame;
+
+        // jump to a page: a visible number box
+        LinearLayout jr = new LinearLayout(this);
+        jr.setOrientation(LinearLayout.HORIZONTAL);
+        jr.setGravity(Gravity.CENTER_VERTICAL);
+        jumpIn = new EditText(this);
+        jumpIn.setInputType(InputType.TYPE_CLASS_NUMBER);
+        jumpIn.setHint("পেজ নম্বর লিখুন");
+        jumpIn.setContentDescription("যে পেজে যেতে চান তার নম্বর");
+        jumpIn.setTextSize(18);
+        jumpIn.setTextColor(INK);
+        jumpIn.setHintTextColor(MUTED);
+        jumpIn.setMinHeight(dp(56));
+        Button go = primary("যাও");
+        go.setOnClickListener(v -> {
+            try {
+                Player.I.gotoPage(Integer.parseInt(BanglaText.asciiDigits(jumpIn.getText().toString().trim())));
+                jumpIn.setText("");
+            } catch (NumberFormatException ex) {
+                Toast.makeText(this, "পেজ নম্বর লিখুন", Toast.LENGTH_SHORT).show();
+            }
+        });
+        jr.addView(jumpIn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 3f));
+        LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f);
+        gl.setMargins(dp(8), 0, 0, 0);
+        jr.addView(go, gl);
+        readerBody.addView(jr, fullWidth(10));
+
+        LinearLayout r3 = new LinearLayout(this);
+        r3.setOrientation(LinearLayout.HORIZONTAL);
+        Button cp = small("📋 এই পেজ কপি", "এই পেজের লেখা কপি করুন");
+        cp.setOnClickListener(v -> {
+            if (Player.I.text.isEmpty()) return;
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("page", Player.I.text));
+            Toast.makeText(this, "কপি হয়েছে", Toast.LENGTH_SHORT).show();
+        });
+        Button again = small("🔁 আবার পড়", "এই পেজ আবার প্রথম থেকে পড়ুন");
+        again.setOnClickListener(v -> Player.I.gotoPage(Player.I.page));
+        Button first = small("⏮ প্রথম পেজ", "প্রথম পেজে যান");
+        first.setOnClickListener(v -> Player.I.gotoPage(1));
+        addWeighted(r3, cp, again, first);
+        readerBody.addView(r3);
+
+        // the text itself, at the bottom of the page
+        textCard = new LinearLayout(this);
+        textCard.setOrientation(LinearLayout.VERTICAL);
+        textCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+        textCard.setBackground(card());
+        tvText = text("", fontSp, false, INK);
+        tvText.setLineSpacing(0f, 1.4f);
+        textCard.addView(tvText);
+        readerBody.addView(textCard, fullWidth(12));
+
+        return readerScroll;
     }
 
     private void refreshReader() {
         if (readerBody == null) return;
+        if (tab == 1) refreshTools();
         Player p = Player.I;
         boolean has = p.doc != null;
         emptyCard.setVisibility(has ? View.VISIBLE : View.GONE);
@@ -416,10 +467,26 @@ public class MainActivity extends AppCompatActivity {
 
     private void scrollTo(int charOffset) {
         Layout lay = tvText.getLayout();
-        if (lay == null || charOffset > tvText.length()) return;
+        if (lay == null || charOffset > tvText.length() || !Player.I.playing) return;
         int line = lay.getLineForOffset(charOffset);
-        int y = lay.getLineTop(line);
-        textScroll.smoothScrollTo(0, Math.max(0, y - dp(40)));
+        int y = lay.getLineTop(line) + offsetIn(tvText, readerScroll);
+        int top = readerScroll.getScrollY();
+        int bottom = top + readerScroll.getHeight();
+        if (y < top + dp(30) || y > bottom - dp(120)) {
+            readerScroll.smoothScrollTo(0, Math.max(0, y - readerScroll.getHeight() / 3));
+        }
+    }
+
+    /** distance from the top of an ancestor's content to the top of a view inside it */
+    private int offsetIn(View v, View ancestor) {
+        int y = 0;
+        View cur = v;
+        while (cur != null && cur != ancestor) {
+            y += cur.getTop();
+            if (!(cur.getParent() instanceof View)) break;
+            cur = (View) cur.getParent();
+        }
+        return y;
     }
 
     private void changeFont(int delta) {
@@ -461,45 +528,46 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ------------------------------------------------------------------ tab 2: add
-    private View buildAdd() {
-        ScrollView sv = new ScrollView(this);
+    private View buildAddCard() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(16), dp(16), dp(24));
-        sv.addView(box);
+        box.setPadding(dp(14), dp(12), dp(14), dp(12));
+        box.setBackground(card());
 
-        TextView head = text("যোগ করুন", 26, true, ACCENT);
-        ViewCompat.setAccessibilityHeading(head, true);
-        box.addView(head);
-
-        // file
-        box.addView(heading("ফাইল বাছুন"));
-        box.addView(text("PDF, টেক্সট (.txt) বা অন্য লেখার ফাইল বাছতে পারবেন। PDF-এর পেজগুলো Gemini AI দিয়ে পড়া হয় (ইন্টারনেট ও সেটিংসে API কী লাগে)। পড়া হয়ে গেলে লেখা ফোনে থেকে যায়, তখন ইন্টারনেট লাগে না।", 16, false, MUTED));
+        TextView hd = text("১. ফাইল, ছবি বা ভিডিও বেছে নিন", 18, true, INK);
+        ViewCompat.setAccessibilityHeading(hd, true);
+        box.addView(hd);
+        box.addView(text("PDF, টেক্সট, ছবি বা ভিডিও। PDF আর ছবি Gemini দিয়ে পড়া হয়, ছবির বর্ণনা ও ভিডিওর দৃশ্যের বর্ণনাও পাওয়া যায় (ইন্টারনেট ও সেটিংসে API কী লাগে)। পড়া হয়ে গেলে লেখা ফোনে থাকে, তখন ইন্টারনেট লাগে না।", 14, false, MUTED));
+        pasteTitle = new EditText(this);
+        pasteTitle.setHint("বইয়ের নাম (না দিলে ফাইল বা লেখা থেকে নিজে হবে)");
+        pasteTitle.setContentDescription("বইয়ের নাম, ঐচ্ছিক");
+        pasteTitle.setTextSize(17);
+        pasteTitle.setTextColor(INK);
+        pasteTitle.setHintTextColor(MUTED);
+        pasteTitle.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        pasteTitle.setMinHeight(dp(52));
+        box.addView(pasteTitle, fullWidth(6));
         Button pick = primary("ফাইল বাছুন");
         pick.setOnClickListener(v -> pickFile());
         box.addView(pick, fullWidth(8));
 
-        // paste
-        box.addView(heading("অথবা লেখা পেস্ট করুন"));
-        pasteTitle = new EditText(this);
-        pasteTitle.setHint("নাম (না দিলে লেখার শুরু থেকে নাম হবে)");
-        pasteTitle.setTextSize(18);
-        pasteTitle.setTextColor(INK);
-        pasteTitle.setHintTextColor(MUTED);
-        pasteTitle.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        pasteTitle.setMinHeight(dp(56));
-        box.addView(pasteTitle);
+        TextView h2 = text("অথবা টেক্সট পেস্ট করুন", 18, true, INK);
+        h2.setPadding(0, dp(14), 0, 0);
+        ViewCompat.setAccessibilityHeading(h2, true);
+        box.addView(h2);
         pasteBody = new EditText(this);
         pasteBody.setHint("এখানে লেখা পেস্ট করুন");
-        pasteBody.setTextSize(18);
+        pasteBody.setTextSize(17);
         pasteBody.setTextColor(INK);
         pasteBody.setHintTextColor(MUTED);
         pasteBody.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         pasteBody.setGravity(Gravity.TOP | Gravity.START);
-        pasteBody.setMinLines(5);
-        pasteBody.setMaxLines(10);
+        pasteBody.setMinLines(2);
+        pasteBody.setMaxLines(6);
         box.addView(pasteBody);
-        Button fromClip = secondary("ক্লিপবোর্ড থেকে বসান");
+        LinearLayout pr = new LinearLayout(this);
+        pr.setOrientation(LinearLayout.HORIZONTAL);
+        Button fromClip = small("📋 ক্লিপবোর্ড থেকে", "ক্লিপবোর্ড থেকে বসান");
         fromClip.setOnClickListener(v -> {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) {
@@ -512,21 +580,20 @@ public class MainActivity extends AppCompatActivity {
             }
             Toast.makeText(this, "ক্লিপবোর্ডে কোনো লেখা নেই", Toast.LENGTH_SHORT).show();
         });
-        box.addView(fromClip, fullWidth(8));
-        Button save = primary("লাইব্রেরিতে রেখে খুলুন");
+        Button save = small("প্রসেস ও খুলুন", "লাইব্রেরিতে রেখে খুলুন");
         save.setOnClickListener(v -> savePasted());
-        box.addView(save, fullWidth(8));
+        addWeighted(pr, fromClip, save);
+        box.addView(pr);
 
-        // progress
         importCard = new LinearLayout(this);
         importCard.setOrientation(LinearLayout.VERTICAL);
-        importCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+        importCard.setPadding(dp(12), dp(10), dp(12), dp(10));
         importCard.setBackground(card());
         importCard.setVisibility(View.GONE);
-        TextView ih = text("PDF পড়া", 18, true, INK);
+        TextView ih = text("PDF পড়া", 17, true, INK);
         ViewCompat.setAccessibilityHeading(ih, true);
         importCard.addView(ih);
-        tvImport = text("", 16, false, INK);
+        tvImport = text("", 15, false, INK);
         importCard.addView(tvImport);
         importBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         importBar.setMax(100);
@@ -545,9 +612,280 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "বন্ধ করা হচ্ছে…", Toast.LENGTH_SHORT).show();
         });
         importCard.addView(btnImportStop, fullWidth(8));
-        LinearLayout.LayoutParams cp = fullWidth(16);
-        box.addView(importCard, cp);
+        box.addView(importCard, fullWidth(12));
+        return box;
+    }
+
+    // ------------------------------------------------------------------ tab 2: tools
+    private String toolAction = "";
+    private int toolFrom = 1, toolTo = 1;
+    private TextView tvToolDoc, tvToolStatus;
+    private LinearLayout toolRangeBox, toolFormatBox;
+    private EditText toolFromIn, toolToIn;
+    private boolean translating = false;
+    private boolean customNamed = false;
+
+    private View buildTools() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(12), dp(14), dp(20));
+        sv.addView(box);
+        TextView head = text("টুলস", 26, true, ACCENT);
+        ViewCompat.setAccessibilityHeading(head, true);
+        box.addView(head);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.setBackground(card());
+        box.addView(card, fullWidth(8));
+
+        tvToolDoc = text("", 16, true, INK);
+        card.addView(tvToolDoc);
+        card.addView(text("যে লেখাটা এখন রিডারে খোলা আছে, তার ওপর কাজ হবে। কোন পেজ থেকে কোন পেজ, সেটা ঠিক করা যায়।", 14, false, MUTED));
+
+        LinearLayout r1 = new LinearLayout(this);
+        r1.setOrientation(LinearLayout.HORIZONTAL);
+        Button bCopy = small("📋 কপি", "লেখা কপি করুন");
+        bCopy.setOnClickListener(v -> startTool("copy"));
+        Button bShare = small("📤 শেয়ার", "লেখা শেয়ার করুন");
+        bShare.setOnClickListener(v -> startTool("share"));
+        Button bDown = small("⬇️ ডাউনলোড", "ফোনে ডাউনলোড করুন");
+        bDown.setOnClickListener(v -> startTool("download"));
+        addWeighted(r1, bCopy, bShare, bDown);
+        card.addView(r1, fullWidth(10));
+        LinearLayout r2 = new LinearLayout(this);
+        r2.setOrientation(LinearLayout.HORIZONTAL);
+        Button bTr = small("🌐 অনুবাদ", "অন্য ভাষায় অনুবাদ করুন");
+        bTr.setOnClickListener(v -> startTool("translate"));
+        Button bSave = small("📚 সেভ", "এই অংশ আলাদা করে লাইব্রেরিতে রাখুন");
+        bSave.setOnClickListener(v -> startTool("save"));
+        addWeighted(r2, bTr, bSave);
+        card.addView(r2);
+
+        toolRangeBox = new LinearLayout(this);
+        toolRangeBox.setOrientation(LinearLayout.HORIZONTAL);
+        toolRangeBox.setGravity(Gravity.CENTER_VERTICAL);
+        toolRangeBox.setPadding(dp(10), dp(10), dp(10), dp(10));
+        toolRangeBox.setBackground(card());
+        toolRangeBox.setVisibility(View.GONE);
+        toolRangeBox.addView(text("ফ্রম:", 16, true, INK));
+        toolFromIn = new EditText(this);
+        toolFromIn.setInputType(InputType.TYPE_CLASS_NUMBER);
+        toolFromIn.setContentDescription("শুরুর পেজ");
+        toolFromIn.setTextColor(INK);
+        toolFromIn.setMinEms(3);
+        toolRangeBox.addView(toolFromIn);
+        TextView to = text(" টু:", 16, true, INK);
+        toolRangeBox.addView(to);
+        toolToIn = new EditText(this);
+        toolToIn.setInputType(InputType.TYPE_CLASS_NUMBER);
+        toolToIn.setContentDescription("শেষ পেজ");
+        toolToIn.setTextColor(INK);
+        toolToIn.setMinEms(3);
+        toolRangeBox.addView(toolToIn);
+        Button ok = primary("ওকে");
+        ok.setOnClickListener(v -> toolRangeOk());
+        LinearLayout.LayoutParams okp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        okp.setMargins(dp(8), 0, 0, 0);
+        toolRangeBox.addView(ok, okp);
+        card.addView(toolRangeBox, fullWidth(12));
+
+        toolFormatBox = new LinearLayout(this);
+        toolFormatBox.setOrientation(LinearLayout.VERTICAL);
+        toolFormatBox.setVisibility(View.GONE);
+        TextView fh = text("ফরম্যাট বেছে নিন:", 16, true, INK);
+        ViewCompat.setAccessibilityHeading(fh, true);
+        toolFormatBox.addView(fh);
+        LinearLayout fr = new LinearLayout(this);
+        fr.setOrientation(LinearLayout.HORIZONTAL);
+        Button fTxt = small("📄 TXT", "টেক্সট ফাইল");
+        fTxt.setOnClickListener(v -> toolFormat(ShareHelper.TXT));
+        Button fPdf = small("📕 PDF", "পিডিএফ ফাইল");
+        fPdf.setOnClickListener(v -> toolFormat(ShareHelper.PDF));
+        Button fDoc = small("📘 DOC", "ডক ফাইল, ওয়ার্ডে খোলে");
+        fDoc.setOnClickListener(v -> toolFormat(ShareHelper.DOC));
+        addWeighted(fr, fTxt, fPdf, fDoc);
+        toolFormatBox.addView(fr);
+        Button fCancel = secondary("বাতিল");
+        fCancel.setOnClickListener(v -> toolCancel());
+        toolFormatBox.addView(fCancel, fullWidth(6));
+        card.addView(toolFormatBox, fullWidth(12));
+
+        tvToolStatus = text("", 15, true, INK);
+        tvToolStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        tvToolStatus.setPadding(0, dp(10), 0, 0);
+        tvToolStatus.setVisibility(View.GONE);
+        card.addView(tvToolStatus);
+
+        box.addView(text("PDF আর DOC ফাইল এই অ্যাপই বানায়। DOC আসলে ওয়ার্ডে খোলা যায় এমন ফাইল, নতুন .docx নয়।", 13, false, MUTED), fullWidth(10));
         return sv;
+    }
+
+    private void refreshTools() {
+        if (tvToolDoc == null) return;
+        Store.Doc d = Player.I.doc;
+        tvToolDoc.setText(d == null ? "এখন কোনো লেখা খোলা নেই। আগে রিডারে বা লাইব্রেরি থেকে একটা খুলুন।"
+                : "খোলা আছে: " + d.title + " (" + BanglaText.digits(d.pages) + " পেজ)");
+    }
+
+    private void toolStatus(String m) {
+        tvToolStatus.setText(m);
+        tvToolStatus.setVisibility(m == null || m.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void toolCancel() {
+        toolAction = "";
+        toolRangeBox.setVisibility(View.GONE);
+        toolFormatBox.setVisibility(View.GONE);
+        toolStatus("");
+    }
+
+    private void startTool(String action) {
+        refreshTools();
+        Store.Doc d = Player.I.doc;
+        if (d == null) {
+            toolStatus("আগে রিডারে একটা লেখা খুলুন।");
+            return;
+        }
+        toolAction = action;
+        toolFormatBox.setVisibility(View.GONE);
+        toolFromIn.setText(String.valueOf(Player.I.page));
+        toolToIn.setText(String.valueOf(d.pages));
+        toolRangeBox.setVisibility(View.VISIBLE);
+        toolStatus("পেজ রেঞ্জ ঠিক করে ওকে চাপুন। এখন পেজ " + BanglaText.digits(Player.I.page) + " থেকে শেষ পর্যন্ত বসানো আছে।");
+        toolFromIn.requestFocus();
+    }
+
+    private void toolRangeOk() {
+        Store.Doc d = Player.I.doc;
+        if (d == null || toolAction.isEmpty()) return;
+        try {
+            toolFrom = Integer.parseInt(BanglaText.asciiDigits(toolFromIn.getText().toString().trim()));
+            toolTo = Integer.parseInt(BanglaText.asciiDigits(toolToIn.getText().toString().trim()));
+        } catch (NumberFormatException e) {
+            toolStatus("পেজ নম্বর লিখুন।");
+            return;
+        }
+        toolFrom = Math.max(1, Math.min(toolFrom, d.pages));
+        toolTo = Math.max(toolFrom, Math.min(toolTo, d.pages));
+        toolFromIn.setText(String.valueOf(toolFrom));
+        toolToIn.setText(String.valueOf(toolTo));
+        if ("share".equals(toolAction) || "download".equals(toolAction)) {
+            toolFormatBox.setVisibility(View.VISIBLE);
+            toolStatus("এবার ফরম্যাট বেছে নিন।");
+            return;
+        }
+        toolRangeBox.setVisibility(View.GONE);
+        try {
+            if ("copy".equals(toolAction)) {
+                String t = ShareHelper.gather(Store.get(this), d, toolFrom, toolTo);
+                if (t.isEmpty()) throw new Exception("এই পেজগুলোতে কোনো লেখা নেই");
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("text", t));
+                toolStatus("কপি হয়েছে (পেজ " + BanglaText.digits(toolFrom) + " থেকে " + BanglaText.digits(toolTo) + ")।");
+            } else if ("save".equals(toolAction)) {
+                String t = ShareHelper.gather(Store.get(this), d, toolFrom, toolTo);
+                if (t.isEmpty()) throw new Exception("এই পেজগুলোতে কোনো লেখা নেই");
+                final String body = t;
+                final EditText nm = new EditText(this);
+                nm.setText(d.title + " (পেজ " + BanglaText.digits(toolFrom) + "-" + BanglaText.digits(toolTo) + ")");
+                nm.setTextSize(18);
+                new AlertDialog.Builder(this)
+                        .setTitle("বইয়ের নাম দিন")
+                        .setView(pad(nm))
+                        .setPositiveButton("সেভ করুন", (x, w) -> {
+                            String nn = nm.getText().toString().trim();
+                            if (nn.isEmpty()) nn = autoTitle(body);
+                            saveText(nn, "paste", body);
+                            toolStatus("\"" + nn + "\" নামে লাইব্রেরিতে রাখা হয়েছে।");
+                        })
+                        .setNegativeButton("বাতিল", null)
+                        .show();
+            } else if ("translate".equals(toolAction)) {
+                translateDialog(d, toolFrom, toolTo);
+            }
+        } catch (Exception e) {
+            toolStatus("হয়নি: " + e.getMessage());
+        }
+    }
+
+    private void toolFormat(int fmt) {
+        Store.Doc d = Player.I.doc;
+        if (d == null) return;
+        toolFormatBox.setVisibility(View.GONE);
+        toolRangeBox.setVisibility(View.GONE);
+        try {
+            if ("share".equals(toolAction)) {
+                ShareHelper.share(this, d, fmt, toolFrom, toolTo);
+                toolStatus("শেয়ারের তালিকা খোলা হয়েছে।");
+            } else {
+                toolStatus(ShareHelper.download(this, d, fmt, toolFrom, toolTo));
+            }
+        } catch (Throwable t) {
+            toolStatus("হয়নি: " + t.getMessage());
+        }
+    }
+
+    private void translateDialog(final Store.Doc d, final int from, final int to) {
+        if (prefs.getString("gemini_key", "").trim().isEmpty()) {
+            toolStatus("অনুবাদের জন্য আগে সেটিংসে Gemini API কী দিন।");
+            return;
+        }
+        if (translating) {
+            toolStatus("আরেকটা অনুবাদ চলছে।");
+            return;
+        }
+        final String[] names = {"বাংলা", "English", "हिन्दी (Hindi)"};
+        final String[] langs = {"Bengali", "English", "Hindi"};
+        new AlertDialog.Builder(this)
+                .setTitle("কোন ভাষায় অনুবাদ?")
+                .setItems(names, (x, w) -> runTranslate(d, from, to, langs[w], names[w]))
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    private void runTranslate(final Store.Doc d, final int from, final int to, final String lang, final String label) {
+        if (to - from + 1 > 40) {
+            toolStatus("একবারে সর্বোচ্চ ৪০ পেজ অনুবাদ করা যায়। রেঞ্জ ছোট করুন।");
+            return;
+        }
+        translating = true;
+        final String key = prefs.getString("gemini_key", "");
+        final String m1 = prefs.getString("ocr_model", "gemini-3.5-flash-lite");
+        final String m2 = prefs.getString("ocr_model2", "gemini-2.5-flash");
+        final Store st = Store.get(this);
+        new Thread(() -> {
+            StringBuilder out = new StringBuilder();
+            String err = null;
+            try {
+                for (int p = from; p <= to; p++) {
+                    final int cur = p;
+                    runOnUiThread(() -> toolStatus("অনুবাদ চলছে: পেজ " + BanglaText.digits(cur) + " (" + BanglaText.digits(cur - from + 1) + "/" + BanglaText.digits(to - from + 1) + ")। অ্যাপ খোলা রাখুন।"));
+                    String t = st.page(d.id, p);
+                    if (t == null || t.trim().isEmpty()) continue;
+                    String r = MediaReader.translate(key, m1, m2, t, lang);
+                    if (out.length() > 0) out.append("\n\n");
+                    out.append(r);
+                    try { Thread.sleep(700); } catch (InterruptedException ie) { break; }
+                }
+            } catch (Gemini.Failure f) {
+                err = f.getMessage();
+            } catch (Throwable t) {
+                err = String.valueOf(t.getMessage());
+            }
+            final String fo = out.toString(), fe = err;
+            runOnUiThread(() -> {
+                translating = false;
+                if (fo.isEmpty()) {
+                    toolStatus("অনুবাদ হয়নি: " + (fe == null ? "লেখা নেই" : fe));
+                    return;
+                }
+                saveText("অনুবাদ (" + label + "): " + d.title, "paste", fo);
+                toolStatus("অনুবাদ লাইব্রেরিতে রাখা হয়েছে" + (fe == null ? "।" : "। তবে মাঝপথে থেমেছে: " + fe));
+            });
+        }).start();
     }
 
     private void savePasted() {
@@ -602,7 +940,21 @@ public class MainActivity extends AppCompatActivity {
         boolean pdf = (type != null && type.contains("pdf")) || name.toLowerCase().endsWith(".pdf");
         String base = name.replaceAll("\\.[A-Za-z0-9]{1,5}$", "");
         if (base.isEmpty()) base = "নামহীন";
+        String custom = pasteTitle == null ? "" : pasteTitle.getText().toString().trim();
+        customNamed = !custom.isEmpty();
+        if (customNamed) {
+            base = custom;
+            pasteTitle.setText("");
+        }
         final String title = base;
+        final boolean isImg = (type != null && type.startsWith("image/"))
+                || name.toLowerCase().matches(".*\\.(jpg|jpeg|png|webp|bmp|gif|heic)$");
+        final boolean isVid = (type != null && type.startsWith("video/"))
+                || name.toLowerCase().matches(".*\\.(mp4|mkv|webm|3gp|mov|avi)$");
+        if (isImg || isVid) {
+            mediaDialog(uri, title, isVid);
+            return;
+        }
         if (pdf) {
             if (Importer.running) {
                 Toast.makeText(this, "আরেকটা PDF পড়া চলছে। শেষ হওয়া পর্যন্ত অপেক্ষা করুন বা বন্ধ করুন।", Toast.LENGTH_LONG).show();
@@ -785,6 +1137,23 @@ public class MainActivity extends AppCompatActivity {
         ViewCompat.setAccessibilityHeading(head, true);
         box.addView(head);
         box.addView(text("এখানকার সবকিছু ফোনে সংরক্ষিত, ইন্টারনেট ছাড়াই পড়া যায়।", 16, false, MUTED));
+        libSearch = new EditText(this);
+        libSearch.setHint("বইয়ের নাম দিয়ে খুঁজুন");
+        libSearch.setContentDescription("লাইব্রেরিতে বইয়ের নাম দিয়ে খুঁজুন");
+        libSearch.setTextSize(17);
+        libSearch.setTextColor(INK);
+        libSearch.setHintTextColor(MUTED);
+        libSearch.setSingleLine(true);
+        libSearch.setMinHeight(dp(52));
+        libSearch.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { refreshLibrary(); }
+            @Override public void afterTextChanged(android.text.Editable e) { }
+        });
+        box.addView(libSearch, fullWidth(8));
+        tvLibCount = text("", 14, false, MUTED);
+        tvLibCount.setPadding(0, dp(4), 0, dp(4));
+        box.addView(tvLibCount);
         libList = new LinearLayout(this);
         libList.setOrientation(LinearLayout.VERTICAL);
         box.addView(libList);
@@ -794,6 +1163,8 @@ public class MainActivity extends AppCompatActivity {
     private static String sourceName(String s) {
         if ("pdf".equals(s)) return "PDF";
         if ("txt".equals(s)) return "টেক্সট ফাইল";
+        if ("img".equals(s)) return "ছবি";
+        if ("vid".equals(s)) return "ভিডিও";
         return "পেস্ট করা লেখা";
     }
 
@@ -807,8 +1178,19 @@ public class MainActivity extends AppCompatActivity {
         if (libList == null) return;
         libList.removeAllViews();
         List<Store.Doc> docs = Store.get(this).docs();
+        int totalDocs = docs.size();
+        String q = libSearch == null ? "" : libSearch.getText().toString().trim().toLowerCase();
+        if (!q.isEmpty()) {
+            List<Store.Doc> f = new java.util.ArrayList<>();
+            for (Store.Doc x : docs) if (x.title.toLowerCase().contains(q)) f.add(x);
+            docs = f;
+        }
+        if (tvLibCount != null) {
+            tvLibCount.setText(q.isEmpty() ? "মোট " + BanglaText.digits(totalDocs) + "টি বই"
+                    : BanglaText.digits(docs.size()) + "টি পাওয়া গেছে (মোট " + BanglaText.digits(totalDocs) + "টি)");
+        }
         if (docs.isEmpty()) {
-            TextView t = text("লাইব্রেরি এখনও খালি। 'যোগ করুন' ট্যাব থেকে লেখা বা PDF যোগ করুন।", 18, false, INK);
+            TextView t = text(totalDocs == 0 ? "লাইব্রেরি এখনও খালি। রিডার ট্যাব থেকে লেখা, PDF, ছবি বা ভিডিও যোগ করুন।" : "এই নামে কোনো বই নেই।", 18, false, INK);
             t.setPadding(0, dp(16), 0, 0);
             libList.addView(t);
             return;
@@ -841,6 +1223,12 @@ public class MainActivity extends AppCompatActivity {
             del.setOnClickListener(v -> deleteDialog(d));
             addWeighted(row, open, ren, del);
             card.addView(row);
+            LinearLayout row2 = new LinearLayout(this);
+            row2.setOrientation(LinearLayout.HORIZONTAL);
+            Button shr = small("শেয়ার", d.title + " শেয়ার করুন");
+            shr.setOnClickListener(v -> shareDialog(d, 0));
+            addWeighted(row2, shr);
+            card.addView(row2);
             LinearLayout.LayoutParams lp = fullWidth(10);
             libList.addView(card, lp);
         }
@@ -906,24 +1294,51 @@ public class MainActivity extends AppCompatActivity {
         box.addView(heading("কোন ভয়েসে পড়া হবে"));
         tvEngine = text("", 16, true, INK);
         box.addView(tvEngine);
-        Button eng = secondary("ইঞ্জিন বাছুন: ফোনের ভয়েস / AI Studio");
-        eng.setOnClickListener(v -> engineDialog());
-        box.addView(eng, fullWidth(8));
+        engGroup = new RadioGroup(this);
+        engGroup.setOrientation(RadioGroup.VERTICAL);
+        rbSys = new RadioButton(this);
+        rbSys.setText("ফোনের ভয়েস (ডিফল্ট, অফলাইনেও চলে)");
+        rbSys.setTextSize(17);
+        rbSys.setTextColor(INK);
+        rbSys.setMinHeight(dp(56));
+        rbSys.setId(View.generateViewId());
+        rbG = new RadioButton(this);
+        rbG.setText("AI Studio ভয়েস (ইন্টারনেট ও API কী লাগে)");
+        rbG.setTextSize(17);
+        rbG.setTextColor(INK);
+        rbG.setMinHeight(dp(56));
+        rbG.setId(View.generateViewId());
+        engGroup.addView(rbSys);
+        engGroup.addView(rbG);
+        engGroup.setOnCheckedChangeListener((grp, id) -> {
+            if (engBusy) return;
+            boolean g = id == rbG.getId();
+            prefs.edit().putString("engine", g ? "gemini" : "system").apply();
+            Player.I.settingsChanged();
+            refreshSettings();
+            if (g && prefs.getString("gemini_key", "").trim().isEmpty()) {
+                Toast.makeText(this, "AI Studio-র জন্য আগে ওপরে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+            }
+        });
+        box.addView(engGroup);
 
-        box.addView(heading("AI Studio ভয়েস"));
-        box.addView(text("Google AI Studio-র Gemini ভয়েস। ইন্টারনেট আর উপরের API কী লাগে। ফ্রি কোটা শেষ হলে পড়া মাঝপথে থামতে পারে (কোড ৪২৯)।", 15, false, MUTED));
+        gBox = new LinearLayout(this);
+        gBox.setOrientation(LinearLayout.VERTICAL);
+        box.addView(gBox);
+        gBox.addView(heading("AI Studio ভয়েসের সেটিংস"));
+        gBox.addView(text("Google AI Studio-র Gemini ভয়েস। ইন্টারনেট আর উপরের API কী লাগে। ফ্রি কোটা শেষ হলে পড়া মাঝপথে থামতে পারে (কোড ৪২৯)।", 15, false, MUTED));
         tvGv = text("", 16, true, INK);
         tvGv.setPadding(0, dp(8), 0, 0);
-        box.addView(tvGv);
+        gBox.addView(tvGv);
         Button gm = secondary("TTS মডেল বাছুন");
         gm.setOnClickListener(v -> ttsModelDialog());
-        box.addView(gm, fullWidth(8));
+        gBox.addView(gm, fullWidth(8));
         Button gv = secondary("ভয়েস বাছুন (৩০টি + আপনার বানানো)");
         gv.setOnClickListener(v -> gVoiceDialog());
-        box.addView(gv, fullWidth(8));
+        gBox.addView(gv, fullWidth(8));
         Button gs = secondary("পড়ার ধরন / আবেগ (স্টাইল)");
         gs.setOnClickListener(v -> gStyleDialog());
-        box.addView(gs, fullWidth(8));
+        gBox.addView(gs, fullWidth(8));
         final CheckBox auto = new CheckBox(this);
         auto.setText("অটো ইমোশন: লেখা বুঝে প্রতি অংশের আবেগ নিজে ঠিক হবে");
         auto.setTextSize(17);
@@ -934,27 +1349,33 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putBoolean("g_auto", on).apply();
             Player.I.settingsChanged();
         });
-        box.addView(auto);
-        box.addView(text("অটো ইমোশনে প্রতি অংশের জন্য একটি বাড়তি Gemini অনুরোধ যায়, তাই কোটা বেশি খরচ হয়।", 14, false, MUTED));
+        gBox.addView(auto);
+        gBox.addView(text("অটো ইমোশনে প্রতি অংশের জন্য একটি বাড়তি Gemini অনুরোধ যায়, তাই কোটা বেশি খরচ হয়।", 14, false, MUTED));
         Button nv = secondary("বর্ণনা দিয়ে নতুন ভয়েস বানান");
         nv.setOnClickListener(v -> designDialog());
-        box.addView(nv, fullWidth(8));
+        gBox.addView(nv, fullWidth(8));
+        Button dv = secondary("আমার বানানো ভয়েস মুছুন");
+        dv.setOnClickListener(v -> deleteDesignedDialog());
+        gBox.addView(dv, fullWidth(8));
         Button gsmp = secondary("AI Studio ভয়েসের নমুনা শুনুন");
         gsmp.setOnClickListener(v -> Player.I.sampleGemini("আমার সোনার বাংলা, আমি তোমায় ভালোবাসি। চিরদিন তোমার আকাশ, তোমার বাতাস, আমার প্রাণে বাজায় বাঁশি।", m -> Toast.makeText(this, m, Toast.LENGTH_SHORT).show()));
-        box.addView(gsmp, fullWidth(8));
+        gBox.addView(gsmp, fullWidth(8));
 
-        box.addView(heading("ফোনের ভয়েস"));
+        sysBox = new LinearLayout(this);
+        sysBox.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sysBox);
+        sysBox.addView(heading("ফোনের ভয়েসের সেটিংস"));
         tvVoice = text("", 16, true, INK);
-        box.addView(tvVoice);
+        sysBox.addView(tvVoice);
         Button voice = secondary("ভয়েস বাছুন");
         voice.setOnClickListener(v -> voiceDialog());
-        box.addView(voice, fullWidth(8));
+        sysBox.addView(voice, fullWidth(8));
         Button sample = secondary("নমুনা শুনুন");
         sample.setOnClickListener(v -> Player.I.sample("আমার সোনার বাংলা, আমি তোমায় ভালোবাসি।"));
-        box.addView(sample, fullWidth(8));
+        sysBox.addView(sample, fullWidth(8));
         Button tts = secondary("ফোনের টেক্সট-টু-স্পিচ সেটিংস খুলুন (বাংলা ভয়েস ডাউনলোডের জন্য)");
         tts.setOnClickListener(v -> openTtsSettings());
-        box.addView(tts, fullWidth(8));
+        sysBox.addView(tts, fullWidth(8));
 
         box.addView(heading("পড়ার সময়"));
         final CheckBox keep = new CheckBox(this);
@@ -979,10 +1400,22 @@ public class MainActivity extends AppCompatActivity {
     private void refreshSettings() {
         if (tvKey == null) return;
         String k = prefs.getString("gemini_key", "").trim();
-        tvKey.setText(k.isEmpty() ? "API কী এখনও দেওয়া হয়নি" : "API কী সংরক্ষিত আছে (শেষে ..." + k.substring(Math.max(0, k.length() - 4)) + ")");
+        int kc = Gemini.keyCount(k);
+        StringBuilder ends = new StringBuilder();
+        for (String one : k.split("[\\s,;]+")) {
+            if (one.isEmpty()) continue;
+            if (ends.length() > 0) ends.append(", ");
+            ends.append("...").append(one.substring(Math.max(0, one.length() - 4)));
+        }
+        tvKey.setText(kc == 0 ? "API কী এখনও দেওয়া হয়নি" : BanglaText.digits(kc) + "টি API কী সংরক্ষিত আছে (শেষ অংশ: " + ends + ")");
         String v = prefs.getString("voice", "");
         boolean g = "gemini".equals(prefs.getString("engine", "system"));
         tvEngine.setText(g ? "এখন পড়া হচ্ছে: AI Studio ভয়েসে" : "এখন পড়া হচ্ছে: ফোনের ভয়েসে (ডিফল্ট)");
+        engBusy = true;
+        if (g) rbG.setChecked(true); else rbSys.setChecked(true);
+        engBusy = false;
+        gBox.setVisibility(g ? View.VISIBLE : View.GONE);
+        sysBox.setVisibility(g ? View.GONE : View.VISIBLE);
         String gvn = prefs.getString("g_voice", GeminiTts.DEFAULT_VOICE);
         tvGv.setText("মডেল: " + prefs.getString("tts_model", GeminiTts.DEFAULT_MODEL)
                 + "\nভয়েস: " + designedName(gvn)
@@ -993,14 +1426,25 @@ public class MainActivity extends AppCompatActivity {
 
     private void keyDialog() {
         final EditText in = new EditText(this);
-        in.setHint("এখানে API কী পেস্ট করুন");
+        in.setHint("এখানে API কী পেস্ট করুন (একাধিক হলে প্রতি লাইনে একটি)");
         in.setTextSize(16);
-        in.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        in.setMinLines(3);
+        in.setGravity(Gravity.TOP | Gravity.START);
+        in.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        int have = Gemini.keyCount(prefs.getString("gemini_key", ""));
         new AlertDialog.Builder(this)
                 .setTitle("Gemini API কী")
-                .setMessage("Google AI Studio থেকে পাওয়া নিজের কী দিন। ফাঁকা রেখে সংরক্ষণ করলে কী মুছে যাবে।")
+                .setMessage("Google AI Studio থেকে পাওয়া নিজের কী দিন। একাধিক কী দিলে অ্যাপ পালা করে ব্যবহার করবে, তাই একটার কোটা শেষ হলে অন্যটা চলবে। এখন সংরক্ষিত: " + BanglaText.digits(have) + "টি।")
                 .setView(pad(in))
-                .setPositiveButton("সংরক্ষণ", (d, w) -> {
+                .setPositiveButton("যোগ করুন", (d, w) -> {
+                    String add = in.getText().toString().trim();
+                    if (add.isEmpty()) return;
+                    String old = prefs.getString("gemini_key", "").trim();
+                    prefs.edit().putString("gemini_key", old.isEmpty() ? add : old + "\n" + add).apply();
+                    refreshSettings();
+                    Toast.makeText(this, "সংরক্ষিত", Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton("সব বদলে এটাই রাখুন", (d, w) -> {
                     prefs.edit().putString("gemini_key", in.getText().toString().trim()).apply();
                     refreshSettings();
                     Toast.makeText(this, "সংরক্ষিত", Toast.LENGTH_SHORT).show();
@@ -1142,6 +1586,41 @@ public class MainActivity extends AppCompatActivity {
         return id;
     }
 
+    private void deleteDesignedDialog() {
+        final org.json.JSONArray des = designedList();
+        if (des.length() == 0) {
+            Toast.makeText(this, "আপনার বানানো কোনো ভয়েস নেই", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String[] names = new String[des.length()];
+        for (int i = 0; i < names.length; i++) names[i] = des.optJSONObject(i).optString("name");
+        new AlertDialog.Builder(this)
+                .setTitle("কোন ভয়েস মুছবেন?")
+                .setItems(names, (d, w) -> {
+                    final int at = w;
+                    new AlertDialog.Builder(this)
+                            .setTitle("\"" + names[at] + "\" মুছবেন?")
+                            .setMessage("এটা এই অ্যাপের তালিকা থেকে মুছে যাবে।")
+                            .setPositiveButton("মুছুন", (d2, w2) -> {
+                                try {
+                                    String id = des.optJSONObject(at).optString("id");
+                                    org.json.JSONArray keep = new org.json.JSONArray();
+                                    for (int i = 0; i < des.length(); i++) if (i != at) keep.put(des.get(i));
+                                    SharedPreferences.Editor e = prefs.edit().putString("g_designed", keep.toString());
+                                    if (id.equals(prefs.getString("g_voice", ""))) e.putString("g_voice", GeminiTts.DEFAULT_VOICE);
+                                    e.apply();
+                                } catch (Exception ignored) { }
+                                Player.I.settingsChanged();
+                                refreshSettings();
+                                Toast.makeText(this, "মুছে গেছে", Toast.LENGTH_SHORT).show();
+                            })
+                            .setNegativeButton("থাক", null)
+                            .show();
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
     private void gVoiceDialog() {
         final org.json.JSONArray des = designedList();
         final int n = des.length();
@@ -1261,6 +1740,104 @@ public class MainActivity extends AppCompatActivity {
                             if (fo.sample != null) Player.I.playSample(fo.sample);
                         });
                     }).start();
+                })
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    // ------------------------------------------------------------------ pictures and videos
+    private void mediaDialog(final Uri uri, final String title, final boolean video) {
+        if (prefs.getString("gemini_key", "").trim().isEmpty()) {
+            Toast.makeText(this, "ছবি বা ভিডিওর জন্য আগে সেটিংসে Gemini API কী দিন", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String[] names = video
+                ? new String[]{"দৃশ্যের বর্ণনা (কী কী দেখা যাচ্ছে)", "দৃশ্যের বর্ণনা + কথাবার্তার সারাংশ"}
+                : new String[]{"ছবির লেখা পড়ুন", "ছবিতে কী আছে তার বর্ণনা দিন", "বর্ণনা আর লেখা দুটোই"};
+        final int[] modes = video
+                ? new int[]{MediaReader.VID_DESC, MediaReader.VID_BOTH}
+                : new int[]{MediaReader.IMG_TEXT, MediaReader.IMG_DESC, MediaReader.IMG_BOTH};
+        new AlertDialog.Builder(this)
+                .setTitle(video ? "ভিডিওতে কী করতে চান?" : "ছবিতে কী করতে চান?")
+                .setItems(names, (d, w) -> runMedia(uri, title, video, modes[w]))
+                .setNegativeButton("বাতিল", null)
+                .show();
+    }
+
+    private void runMedia(final Uri uri, final String title, final boolean video, final int mode) {
+        final String[] progress = {"শুরু হচ্ছে…"};
+        final boolean[] cancelled = {false};
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle(video ? "ভিডিও বোঝা হচ্ছে" : "ছবি পড়া হচ্ছে")
+                .setMessage(progress[0] + "\n\nঅ্যাপ খোলা রাখুন।")
+                .setCancelable(false)
+                .setNegativeButton("বন্ধ করুন", (d, w) -> cancelled[0] = true)
+                .show();
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        final Runnable tick = new Runnable() {
+            @Override public void run() {
+                if (!dlg.isShowing()) return;
+                dlg.setMessage(progress[0] + "\n\nঅ্যাপ খোলা রাখুন।");
+                h.postDelayed(this, 1000);
+            }
+        };
+        h.postDelayed(tick, 1000);
+        final String key = prefs.getString("gemini_key", "");
+        final String m1 = prefs.getString("ocr_model", "gemini-3.5-flash-lite");
+        final String m2 = prefs.getString("ocr_model2", "gemini-2.5-flash");
+        new Thread(() -> {
+            String out = null;
+            String err = null;
+            try {
+                progress[0] = video ? "ভিডিও প্রস্তুত হচ্ছে…" : "ছবি Gemini-তে পাঠানো হচ্ছে…";
+                out = video ? MediaReader.video(getApplicationContext(), uri, mode, key, m1, m2, progress)
+                        : MediaReader.image(getApplicationContext(), uri, mode, key, m1, m2);
+            } catch (Gemini.Failure f) {
+                err = f.getMessage();
+            } catch (Throwable t) {
+                err = String.valueOf(t.getMessage());
+            }
+            final String fo = out, fe = err;
+            runOnUiThread(() -> {
+                try { dlg.dismiss(); } catch (Throwable ignored) { }
+                if (cancelled[0]) return;
+                if (fo == null) {
+                    new AlertDialog.Builder(this).setTitle("হয়নি").setMessage(fe).setPositiveButton("ঠিক আছে", null).show();
+                    return;
+                }
+                String t = customNamed ? title : (video ? "ভিডিও: " : "ছবি: ") + title;
+                long id = saveText(t, video ? "vid" : "img", fo);
+                Player.I.open(id, 1, 0);
+                select(0);
+                Toast.makeText(this, "লাইব্রেরিতে রাখা হয়েছে", Toast.LENGTH_SHORT).show();
+            });
+        }).start();
+    }
+
+    // ------------------------------------------------------------------ share
+    private void shareDialog(final Store.Doc d, final int page) {
+        final java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        final java.util.ArrayList<int[]> opts = new java.util.ArrayList<>();
+        names.add("টেক্সট ফাইল (.txt)");
+        opts.add(new int[]{ShareHelper.TXT, 0});
+        names.add("PDF ফাইল");
+        opts.add(new int[]{ShareHelper.PDF, 0});
+        names.add("DOC ফাইল (Word-এ খোলে)");
+        opts.add(new int[]{ShareHelper.DOC, 0});
+        names.add("শুধু লেখা হিসেবে (মেসেজ বা নোটে)");
+        opts.add(new int[]{ShareHelper.PLAIN, 0});
+        if (page > 0) {
+            names.add("শুধু এই পেজ (পেজ " + BanglaText.digits(page) + ") — লেখা হিসেবে");
+            opts.add(new int[]{ShareHelper.PLAIN, page});
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("\"" + d.title + "\" কীভাবে শেয়ার করবেন?")
+                .setItems(names.toArray(new String[0]), (x, w) -> {
+                    try {
+                        ShareHelper.share(this, d, opts.get(w)[0], opts.get(w)[1] > 0 ? opts.get(w)[1] : 1, opts.get(w)[1] > 0 ? opts.get(w)[1] : d.pages);
+                    } catch (Throwable t) {
+                        Toast.makeText(this, "শেয়ার করা যায়নি: " + t.getMessage(), Toast.LENGTH_LONG).show();
+                    }
                 })
                 .setNegativeButton("বাতিল", null)
                 .show();

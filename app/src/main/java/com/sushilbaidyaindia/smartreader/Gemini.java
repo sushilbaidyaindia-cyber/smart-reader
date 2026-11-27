@@ -18,6 +18,25 @@ final class Gemini {
             + "Reading order: top to bottom, left to right. Keep line breaks. Do not summarize. Do not add labels or commentary. "
             + "Bengali and other scripts must stay exact.";
 
+    private static int rot = 0;
+
+    /** the settings may hold several keys (one per line); each call takes the next one, so a spent key is skipped by the retry */
+    static synchronized String pick(String raw) {
+        if (raw == null) return "";
+        String[] parts = raw.trim().split("[\\s,;]+");
+        java.util.ArrayList<String> ks = new java.util.ArrayList<>();
+        for (String p : parts) if (!p.isEmpty()) ks.add(p);
+        if (ks.isEmpty()) return "";
+        return ks.get((rot++ & 0x7fffffff) % ks.size());
+    }
+
+    static int keyCount(String raw) {
+        if (raw == null) return 0;
+        int n = 0;
+        for (String p : raw.trim().split("[\\s,;]+")) if (!p.isEmpty()) n++;
+        return n;
+    }
+
     static final class Failure extends Exception {
         final boolean retryable;
         Failure(String m, boolean retryable) {
@@ -28,6 +47,7 @@ final class Gemini {
 
     /** One call to one model. Returns the page text (may be empty). */
     static String ocr(String key, String model, String jpegBase64) throws Failure {
+        key = pick(key);
         try {
             JSONObject part1 = new JSONObject().put("text", PROMPT);
             JSONObject inline = new JSONObject().put("mime_type", "image/jpeg").put("data", jpegBase64);

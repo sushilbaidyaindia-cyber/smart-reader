@@ -185,6 +185,7 @@ final class GeminiTts {
 
     // ------------------------------------------------------------------ plumbing
     private static String post(String url, String key, String json, int readTimeout) throws Exception {
+        key = Gemini.pick(key);
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(30000);
         c.setReadTimeout(readTimeout);
