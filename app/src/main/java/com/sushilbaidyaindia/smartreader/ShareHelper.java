@@ -36,7 +36,7 @@ final class ShareHelper {
         return all.toString();
     }
 
-    private static String safeName(Store.Doc d, int from, int to) {
+    static String safeName(Store.Doc d, int from, int to) {
         String safe = d.title.replaceAll("[\\\\/:*?\"<>|\\n\\r]", " ").trim();
         if (safe.isEmpty()) safe = "smart-reader";
         if (safe.length() > 60) safe = safe.substring(0, 60).trim();
@@ -84,10 +84,25 @@ final class ShareHelper {
         a.startActivity(Intent.createChooser(send, "শেয়ার করুন"));
     }
 
+    /** sends a ready file (for instance the MP3) through the share sheet */
+    static void shareFile(Activity a, File f, String mime, String subject) {
+        Uri uri = FileProvider.getUriForFile(a, a.getPackageName() + ".fileprovider", f);
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType(mime);
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.putExtra(Intent.EXTRA_SUBJECT, subject);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        a.startActivity(Intent.createChooser(send, "শেয়ার করুন"));
+    }
+
     /** saves into the phone's Downloads folder; returns a sentence saying where */
     static String download(Activity a, Store.Doc d, int fmt, int from, int to) throws Exception {
         File f = build(a, d, fmt, from, to);
         String mime = fmt == PDF ? "application/pdf" : fmt == DOC ? "application/msword" : "text/plain";
+        return saveFile(a, f, mime);
+    }
+
+    static String saveFile(Activity a, File f, String mime) throws Exception {
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             android.content.ContentValues v = new android.content.ContentValues();
             v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, f.getName());

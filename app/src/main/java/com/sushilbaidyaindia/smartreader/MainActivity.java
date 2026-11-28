@@ -836,6 +836,8 @@ public class MainActivity extends AppCompatActivity {
     private EditText toolFromIn, toolToIn;
     private boolean translating = false;
     private boolean customNamed = false;
+    private LinearLayout audioCard;
+    private volatile boolean audioBusy = false;
 
     private View buildTools() {
         ScrollView sv = new ScrollView(this);
@@ -931,6 +933,24 @@ public class MainActivity extends AppCompatActivity {
         tvToolStatus.setVisibility(View.GONE);
         card.addView(tvToolStatus);
 
+        audioCard = new LinearLayout(this);
+        audioCard.setOrientation(LinearLayout.VERTICAL);
+        audioCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+        audioCard.setBackground(card());
+        TextView ah = text("🎧 অডিও বানান (AI Studio ভয়েস)", 18, true, INK);
+        ViewCompat.setAccessibilityHeading(ah, true);
+        audioCard.addView(ah);
+        audioCard.addView(text("AI Studio ভয়েসে পেজগুলো পড়ে একটা MP3 ফাইল বানায়। প্রতিটা অংশের জন্য Gemini-র অনুরোধ যায়, তাই কোটা খরচ হয়। একবারে সর্বোচ্চ ১৫ পেজ।", 14, false, MUTED));
+        LinearLayout ar = new LinearLayout(this);
+        ar.setOrientation(LinearLayout.HORIZONTAL);
+        Button aDl = small("⬇️ MP3 ডাউনলোড", "অডিও MP3 হিসেবে ডাউনলোড করুন");
+        aDl.setOnClickListener(v -> startTool("audio_download"));
+        Button aSh = small("📤 MP3 শেয়ার", "অডিও MP3 শেয়ার করুন");
+        aSh.setOnClickListener(v -> startTool("audio_share"));
+        addWeighted(ar, aDl, aSh);
+        audioCard.addView(ar, fullWidth(8));
+        box.addView(audioCard, fullWidth(12));
+
         box.addView(text("PDF আর DOC ফাইল এই অ্যাপই বানায়। DOC আসলে ওয়ার্ডে খোলা যায় এমন ফাইল, নতুন .docx নয়।", 13, false, MUTED), fullWidth(10));
         return sv;
     }
@@ -938,6 +958,7 @@ public class MainActivity extends AppCompatActivity {
     private void refreshTools() {
         if (tvToolDoc == null) return;
         Store.Doc d = Player.I.doc;
+        if (audioCard != null) audioCard.setVisibility("gemini".equals(prefs.getString("engine", "system")) ? View.VISIBLE : View.GONE);
         tvToolDoc.setText(d == null ? "এখন কোনো লেখা খোলা নেই। আগে রিডারে বা লাইব্রেরি থেকে একটা খুলুন।"
                 : "খোলা আছে: " + d.title + " (" + BanglaText.digits(d.pages) + " পেজ)");
     }
@@ -984,6 +1005,11 @@ public class MainActivity extends AppCompatActivity {
         toolTo = Math.max(toolFrom, Math.min(toolTo, d.pages));
         toolFromIn.setText(String.valueOf(toolFrom));
         toolToIn.setText(String.valueOf(toolTo));
+        if (toolAction.startsWith("audio_")) {
+            toolRangeBox.setVisibility(View.GONE);
+            makeAudio(d, toolFrom, toolTo, "audio_share".equals(toolAction));
+            return;
+        }
         if ("share".equals(toolAction) || "download".equals(toolAction)) {
             toolFormatBox.setVisibility(View.VISIBLE);
             toolStatus("এবার ফরম্যাট বেছে নিন।");
@@ -1021,6 +1047,79 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             toolStatus("হয়নি: " + e.getMessage());
         }
+    }
+
+    private void makeAudio(final Store.Doc d, final int from, final int to, final boolean share) {
+        if (!"gemini".equals(prefs.getString("engine", "system"))) {
+            toolStatus("অডিও বানাতে সেটিংসে AI Studio ভয়েস বাছুন।");
+            return;
+        }
+        final String key = prefs.getString("gemini_key", "");
+        if (key.trim().isEmpty()) {
+            toolStatus("আগে সেটিংসে Gemini API কী দিন।");
+            return;
+        }
+        if (to - from + 1 > 15) {
+            toolStatus("একবারে সর্বোচ্চ ১৫ পেজের অডিও বানানো যায়। রেঞ্জ ছোট করুন।");
+            return;
+        }
+        if (audioBusy) {
+            toolStatus("আরেকটা অডিও বানানো চলছে।");
+            return;
+        }
+        audioBusy = true;
+        final String[] progress = {"শুরু হচ্ছে…"};
+        final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("অডিও বানানো হচ্ছে")
+                .setMessage(progress[0] + "\n\nঅ্যাপ খোলা রাখুন।")
+                .setCancelable(false)
+                .setNegativeButton("বন্ধ করুন", (x, w) -> cancelled.set(true))
+                .show();
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        final Runnable tick = new Runnable() {
+            @Override public void run() {
+                if (!dlg.isShowing()) return;
+                dlg.setMessage(progress[0] + "\n\nঅ্যাপ খোলা রাখুন।");
+                h.postDelayed(this, 1000);
+            }
+        };
+        h.postDelayed(tick, 1000);
+        final String model = prefs.getString("tts_model", GeminiTts.DEFAULT_MODEL);
+        final String voice = prefs.getString("g_voice", GeminiTts.DEFAULT_VOICE);
+        final String style = prefs.getString("g_style", "");
+        final boolean auto = prefs.getBoolean("g_auto", false);
+        final String textModel = Gemini.chain(prefs.getString("ocr_model", ""), prefs.getString("ocr_model2", ""))[0];
+        final android.content.Context app = getApplicationContext();
+        new Thread(() -> {
+            java.io.File f = null;
+            String err = null;
+            try {
+                f = AudioExport.make(app, d, from, to, key, model, voice, style, auto, textModel, m -> progress[0] = m, cancelled);
+            } catch (Throwable t) {
+                err = String.valueOf(t.getMessage());
+            }
+            final java.io.File ff = f;
+            final String fe = err;
+            runOnUiThread(() -> {
+                audioBusy = false;
+                try { dlg.dismiss(); } catch (Throwable ignored) { }
+                if (ff == null) {
+                    toolStatus(cancelled.get() ? "বন্ধ করা হয়েছে।" : "অডিও হয়নি: " + fe);
+                    return;
+                }
+                try {
+                    if (share) {
+                        ShareHelper.shareFile(this, ff, "audio/mpeg", d.title);
+                        toolStatus("অডিও তৈরি, শেয়ারের তালিকা খোলা হয়েছে।");
+                    } else {
+                        toolStatus(ShareHelper.saveFile(this, ff, "audio/mpeg"));
+                    }
+                } catch (Throwable t) {
+                    toolStatus("অডিও তৈরি হয়েছে, কিন্তু রাখা যায়নি: " + t.getMessage());
+                }
+            });
+        }).start();
     }
 
     private void toolFormat(int fmt) {

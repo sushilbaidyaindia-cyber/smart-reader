@@ -10,7 +10,7 @@ android {
         applicationId "com.sushilbaidyaindia.smartreader"
         minSdk 24
         targetSdk 34
-        // every GitHub build gets the next number automatically (GITHUB_RUN_NUMBER), so versions differ build to build
+        // every GitHub build gets the next number automatically (GITHUB_RUN_NUMBER)
         def runNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
         versionCode runNo
         versionName "1.${runNo}"
@@ -48,4 +48,5 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     // reads the text of PDFs that have real text in them (works offline)
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+    implementation 'de.sciss:jump3r:1.0.5'     // MP3 encoder for the AI Studio audio export
 }
